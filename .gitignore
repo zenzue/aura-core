@@ -1,0 +1,25 @@
+# Build artifacts
+.pio/
+build/
+dist/
+*.pyc
+__pycache__/
+.venv/
+
+# Secrets
+.env
+.env.local
+gateway/.env
+*.pem
+*.key
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Node (simulator dev only)
+node_modules/
+
+# Codegraph
+.codegraph/
