@@ -1,0 +1,33 @@
+[project]
+name = "aura-gateway"
+version = "0.1.0"
+description = "AURA AI pet gateway: STT/LLM/TTS orchestration, tools, memory"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "litestar[standard]>=2.24,<2.25",
+    "httpx>=0.28,<0.29",
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.6,<3",
+    "aiosqlite>=0.20,<1",
+]
+
+[project.optional-dependencies]
+gemini = ["google-genai>=2.31,<3"]
+whisper = ["faster-whisper>=1.2,<2"]
+piper = ["piper-tts>=1.8,<2", "onnxruntime>=1.20"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "anyio>=4"]
+
+[project.scripts]
+aura-gateway = "app.main:run"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["requires_models: tests that download/use real AI models (slow)"]
+asyncio_mode = "auto"
+
+[tool.uv]
+package = false
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
