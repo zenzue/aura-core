@@ -91,15 +91,17 @@ class MemoryStore:
 
             # Ask LLM to summarize
             resp = await llm.generate_reply(
-                system_prompt="Summarize the conversation in <=2 sentences.",
                 messages=history,
                 tools=None,
-                json_schema=None,
-                timeout_s=self.settings.llm_timeout_s,
+                system_prompt=(
+                    "Summarize the conversation in at most 2 sentences. "
+                    'Reply as JSON: {"spoken_text": "<summary>", "emotion": "neutral", '
+                    '"expression_intensity": 0.5, "animation_hint": "none", "action": "none"}'
+                ),
             )
 
-            # Extract text from response
-            summary = resp.get("text", "")
+            summary = resp.get("spoken_text") or resp.get("display_text") or ""
+            summary = str(summary).strip()
             if not summary:
                 return None
 
