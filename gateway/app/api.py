@@ -7,7 +7,8 @@ from litestar import Request, Response, get, post
 from litestar.exceptions import HTTPException
 from litestar.status_codes import HTTP_200_OK, HTTP_400_BAD_REQUEST, HTTP_502_BAD_GATEWAY
 
-from app.config import Settings, InteractRequest, AuraResponse, DeviceStats, TTSRequest
+from app.config import Settings
+from app.schemas import InteractRequest, AuraResponse, DeviceStats, TTSRequest
 from app.providers.llm_base import ReplyParseError
 
 logger = logging.getLogger(__name__)

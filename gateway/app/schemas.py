@@ -86,6 +86,11 @@ class DeviceStats(BaseModel):
     uptime_s: int | None = None
 
 
+class TTSRequest(BaseModel):
+    text: str = ""
+    voice: str | None = None
+
+
 class HealthOut(BaseModel):
     ok: bool = True
     llm: str = "unknown"
