@@ -36,31 +36,36 @@ class STTFasterWhisper(STTProvider):
         return self._model
 
     async def transcribe(self, wav: bytes, timeout_s: float = 20.0) -> str:
-        """Transcribe 16kHz mono PCM16 WAV to text."""
+        """Transcribe 16kHz mono s16 WAV bytes to text."""
         model = self._lazy_load()
 
-        # VAD filter: split on silence (using beam search VAD)
-        # Faster-whisper already includes VAD, but we explicitly enable
-        segments, _ = await asyncio.wait_for(
+        # Decode WAV ourselves: faster-whisper's av-based decode_audio is
+        # broken with PyAV>=19 on this platform; passing a float32 ndarray
+        # skips that path entirely.
+        from app.audio.wav_utils import parse_wav
+
+        header = parse_wav(wav, require_mono=True)
+        samples = np.frombuffer(header.pcm, dtype=np.int16).astype(np.float32) / 32768.0
+        if header.rate != 16000:
+            dur = samples.shape[0] / header.rate
+            target = int(dur * 16000)
+            src_idx = np.linspace(0.0, samples.shape[0] - 1.0, target, dtype=np.float64)
+            base = np.floor(src_idx).astype(np.int64)
+            nxt = np.minimum(base + 1, samples.shape[0] - 1)
+            frac = (src_idx - base).astype(np.float32)
+            samples = samples[base] * (1.0 - frac) + samples[nxt] * frac
+
+        segments, _info = await asyncio.wait_for(
             asyncio.to_thread(
-            model.transcribe,
-            io.BytesIO(wav),
-            beam_size=1,
-            best_of=5,
-            patience=1.0,
-            length_penalty=1.0,
-            temperature=0.0,
-            compression_ratio_threshold=2.4,
-            condition_on_previous_text=False,
-            initial_prompt=None,
-            prefix_images=None,
-            suppress_blank=True,
-            suppress_punctuation=False,
-            suppress_special_tokens=False,
-            word_timestamps=False,
-            vad_filter=True,  # <--- explicit
-            vad_parameters=dict(threshold=0.5, window_size=3, min_speech_duration=0.1),
-            ), timeout_s)
+                model.transcribe,
+                samples,
+                beam_size=5,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=400.0),
+                word_timestamps=False,
+            ),
+            timeout_s,
+        )
 
         text = " ".join(segment.text.strip() for segment in segments)
         return text

@@ -1,6 +1,9 @@
 """Piper TTS provider with voice download and lazy loading."""
 
 import asyncio
+import logging
+import sys
+from app.audio.wav_utils import build_wav
 import os
 from pathlib import Path
 from typing import Any
@@ -13,6 +16,8 @@ try:
     from piper import PiperVoice
 except ImportError:
     PiperVoice = None  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 
 class TTSPiper(TTSProvider):
@@ -33,28 +38,26 @@ class TTSPiper(TTSProvider):
         voice_file = self._voice_path()
         if voice_file.exists():
             return True
-
-        # Attempt download (uv run python -m piper.download_voices <voice>)
         voice_name = self.settings.tts_voice
-        cmd = ["uv", "run", "python", "-m", "piper.download_voices", voice_name]
+        dest_dir = voice_file.parent
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            sys.executable, "-m", "piper.download_voices",
+            "--download-dir", str(dest_dir),
+            voice_name,
+        ]
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await proc.communicate()
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=300.0)
             if proc.returncode == 0:
-                # Download puts into current dir? or voices/ ?
-                # Piper download_voices writes to current working dir.
-                # We expect <voice_name>.onnx there; move it.
-                downloaded = Path.cwd() / f"{voice_name}.onnx"
-                if downloaded.exists():
-                    downloaded.rename(voice_file)
-                    return True
-            # Tolerate fail: return False
-        except Exception:
-            pass  # tolerate
+                return voice_file.exists()
+            logger.warning("voice download failed: %s", stderr.decode()[:300])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("voice download error: %s", exc)
         return False
 
     def _lazy_voice(self) -> PiperVoice:
