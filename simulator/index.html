@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AURA Face Simulator — Core2 320x240</title>
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0b0f1a; color:#cfe8ff; font:14px/1.5 ui-monospace,SFMono-Regular,menlo,monospace; margin:0; padding:16px; display:flex; gap:20px; flex-wrap:wrap; }
+  canvas { background:#000; image-rendering:pixelated; border:1px solid #1d2c44; border-radius:8px; }
+  .panel { width: 340px; }
+  h1 { font-size:15px; color:#8ce0ff; margin:0 0 8px; }
+  .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; margin:8px 0; }
+  button, input, select { background:#12203a; color:#cfe8ff; border:1px solid #274060; border-radius:6px; padding:5px 7px; font:inherit; }
+  button:hover { background:#1b3253; }
+  button.on { background:#1f5c8a; border-color:#57b8ff; }
+  code { color:#9fe8d0; }
+  label { display:block; margin:10px 0 4px; color:#7fa8d0; }
+  .note { color:#6b89ad; font-size:12px; margin-top:14px; }
+</style>
+</head>
+<body>
+<div>
+  <canvas id="face" width="320" height="240" style="width:640px;height:480px"></canvas>
+  <div class="note">Canvas is exactly 320x240 = M5Stack Core2 display. Ported from EmotionEngine.cpp + FaceRenderer.cpp.</div>
+</div>
+<div class="panel">
+  <h1>AURA face simulator</h1>
+  <div class="grid" id="emotions"></div>
+  <label>speak amplitude (0..255)</label>
+  <input id="speak" type="range" min="0" max="255" value="0" style="width:100%">
+  <label>think</label>
+  <div><button id="thinkBtn">toggle thinking</button> <button id="blinkBtn">force blink</button></div>
+  <label>brightness</label>
+  <input id="bright" type="range" min="0" max="255" value="200" style="width:100%">
+  <div class="note">Port: geometry kEyeCx=[104,216] kEyeCy=106 halfW=34 halfH=40,
+  halo rings, lid-split roundrect with tilt, iris/core/pupil/highlight, RGB565 colors,
+  expression table values, blink schedule, gaze wander.</div>
+</div>
+<script>
+"use strict";
+// ---------- RGB565 helpers (mirror firmware rgb565/blend565/brighten565) ----------
+function rgb565ToRgb(c){ const r=(c>>11)&31, g=((c>>5)&63), b=c&31; return [r<<3, (g<<2)|0, b<<3]; }
+function rgbTo565(r,g,b){ return ((r&248)<<8)|((g>>3)<<3)|(b>>5); } // approx to firmware
+function rgb565(r,g,b){ return ((r&0xff)>>3<<11)|(((g&0xff)>>2)<<5)|((b&0xff)>>3); }
+function clamp01(v){ return v<0?0:v>1?1:v; }
+function hex565(c){ const [r,g,b]=rgb565ToRgb(c); return `rgb(${r},${g},${b})`; }
+function blend(c0,c1,t){ const a=rgb565ToRgb(c0), b=rgb565ToRgb(c1); t=clamp01(t);
+  const mix=(i)=>Math.round(a[i]+(b[i]-a[i])*t); return rgb565(mix(0),mix(1),mix(2)); }
+function brighten(c,f){ const [r,g,b]=rgb565ToRgb(c); const m=(v)=>Math.min(255,Math.round(v*(1+clamp01(f))));
+  return rgb565(m(r),m(g),m(b)); }
+
+// ---------- firmware constants ----------
+const W=320,H=240;
+const EYE_CX=[104,216], EYE_CY=106, EYE_HW=34, EYE_HH=40;
+const BG_TOP=rgb565(4,10,24), BG_BOT=rgb565(10,22,40);
+const EYE_CORE=rgb565(150,255,250), EYE_EDGE=rgb565(30,200,220), ACCENT=rgb565(140,245,210);
+
+const EMOTIONS=["NEUTRAL","HAPPY","EXCITED","AFFECTIONATE","CURIOUS","LISTENING","THINKING","SURPRISED","CONFUSED","SAD","FRUSTRATED","SLEEPY","SLEEPING","SPEAKING","EMBARRASSED","ALERT"];
+// ExpressionDef: [openness,squint,lidTilt,gazeX,gazeY,pupilScale,glow,eyeScale] + blinkRate,glowBias,lidTiltBias,gazeXBias,gazeYBias,eyeScaleBias,flags,transitionMs
+const TABLE=[
+ [[1.00,0.00,0.00,0,0,1.00,0.35,1.00],1.0,0.00,0.00,0,0,0,0,400],
+ [[0.95,0.15,0.25,0,0,1.02,0.45,1.00],0.9,0.10,0.25,0,0,0,0,350],
+ [[0.95,0.00,0.00,0,0,1.10,0.65,1.00],1.8,0.30,0.00,0,0,0.10,4,250],
+ [[0.85,0.65,0.00,0,-0.15,1.00,0.50,1.00],0.5,0.15,0.00,0,-0.15,0,0,500],
+ [[0.92,0.10,0.35,0,0,1.03,0.48,1.00],1.1,0.08,0.35,0.10,-0.10,0,0,450],
+ [[0.95,0.00,0.00,0,0,1.00,0.55,1.08],1.2,0.20,0.00,0,0,0.05,4,300],
+ [[0.85,0.20,0.00,-0.35,-0.40,1.00,0.45,1.00],1.3,0.10,0.00,-0.35,-0.40,0,1,550],
+ [[0.95,0.00,0.00,0,0,1.15,0.50,1.00],2.0,0.15,0.00,0,0,0.15,4,200],
+ [[0.88,0.25,0.20,0.15,0,1.00,0.40,1.00],1.0,0.05,0.20,0.15,0,0,0,400],
+ [[0.70,0.00,-0.55,0,-0.20,1.00,0.20,1.00],0.7,-0.15,-0.55,0,-0.20,0,0,650],
+ [[0.65,0.70,0.45,0,0,1.00,0.60,1.00],1.5,0.25,0.45,0,0,0,0,300],
+ [[0.45,0.30,-0.20,0,-0.10,1.00,0.15,1.00],0.6,-0.20,-0.20,0,-0.10,0,8,700],
+ [[0.02,0.50,0.00,0,0,1.00,0.05,1.00],0.0,-0.30,0.00,0,0,0,8,800],
+ [[0.90,0.10,0.00,0,0,1.00,0.40,1.00],1.4,0.05,0.00,0,0,0,16,350],
+ [[0.65,0.30,-0.20,0.25,-0.15,1.00,0.35,1.00],0.8,0.00,-0.20,0.25,-0.15,0,0,450],
+ [[0.98,0.00,0.00,0,0,1.08,0.50,1.00],1.6,0.20,0.00,0,0,0.08,4,220],
+];
+
+const canvas=document.getElementById("face"), ctx=canvas.getContext("2d");
+let emotion=0, intensity=1, thinking=false, speakAmp=0, brightness=200;
+let blinkRate=1.0, glowBias=0, lidTiltBias=0, gazeXBias=0, gazeYBias=0, eyeScaleBias=0, transMs=400;
+// per-eye current rig (smoothed)
+const rig=[...Array(2)].map(()=>({openness:1,squint:0,lidTilt:0,gazeX:0,gazeY:0,pupilScale:1,glow:0.35,eyeScale:1}));
+let blinkHold=120;
+let wanderX=0, wanderY=0, wanderNext=0, thinkPulse=0;
+
+function setEmotion(i){
+  emotion=i; const t=TABLE[i];
+  blinkRate=t[1]; glowBias=t[2]; lidTiltBias=t[3]; gazeXBias=t[4]; gazeYBias=t[5]; eyeScaleBias=t[6];
+  transMs=t[8];
+  if (i===6) setThinking(true); else setThinking(false);
+  document.querySelectorAll("#emotions button").forEach((b,k)=>b.classList.toggle("on",k===i));
+}
+function setThinking(on){ thinking=on; document.getElementById("thinkBtn").classList.toggle("on",on); }
+
+function targetRig(){
+  const t=TABLE[emotion][0];
+  const boost=0.6+0.4*intensity; // intensity extremes boost
+  return {
+    openness: t[0], squint:(t[1])*boost, lidTilt:(t[2]+lidTiltBias)*boost,
+    gazeX:(t[3]+gazeXBias+wanderX)*boost, gazeY:(t[4]+gazeYBias+wanderY)*boost,
+    pupilScale:t[5], glow:clamp01(t[6]+glowBias), eyeScale:t[7]*(1+eyeScaleBias)
+  };
+}
+
+function smooth(dt){
+  const tgt=targetRig();
+  const k=clamp01(dt/(transMs*0.25)); // approach factor
+  for(const e of rig){
+    for(const key of Object.keys(tgt)){ e[key]+=(tgt[key]-e[key])*k; }
+  }
+}
+
+function roundRectPath(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+
+function drawEye(idx,t){
+  const cx=EYE_CX[idx], cy=EYE_CY;
+  const scale=t.eyeScale;
+  const speak=speakAmp/255;
+  const openness=Math.max(0, t.openness - (speak*0.04)); // speak bounce
+  const glow=t.glow*(brightness/255);
+  // gaze offsets
+  const travelW=EYE_HW*(1-t.pupilScale*0.3)-2, travelH=EYE_HH*0.8-2;
+  let pupilXOff=t.gazeX*travelW, pupilYOff=t.gazeY*travelH;
+  if(speak>0.1){ const j=(speak*1.5)|0; pupilXOff+=(j%3)-1; pupilYOff+=(j%3)-1; }
+  // closed eye: single line
+  if(openness<0.06){
+    const lineW=EYE_HW*2.4*scale, lineH=2+glow*3;
+    ctx.fillStyle=hex565(EYE_EDGE);
+    ctx.fillRect(cx-lineW/2,cy-lineH/2,lineW,lineH);
+    return;
+  }
+  const innerHalfH=EYE_HH*openness*scale;
+  // halo rings
+  const haloBaseR=innerHalfH*2.4, bgMid=blend(BG_TOP,BG_BOT,0.5);
+  for(let i=0;i<3;i++){ const r=haloBaseR-i*6; if(r>4){ ctx.fillStyle=hex565(blend(EYE_EDGE,bgMid,glow*(0.20-i*0.06)* (1+i*0))); ctx.beginPath(); ctx.arc(cx,cy,r,0,7); ctx.fill(); } }
+  const eyeW=EYE_HW*2*scale*(1+0.05*Math.max(0,t.squint)), eyeH=EYE_HH*openness*2*scale;
+  const eyeWInt=eyeW|0, eyeHInt=eyeH|0; let eyeRadius=Math.max(6,eyeWInt/4|0);
+  const topY=cy-(eyeHInt/2), topH=eyeHInt/2, bottomH=eyeHInt-topH;
+  ctx.fillStyle=hex565(EYE_EDGE);
+  // bottom half
+  let bottomRadius=eyeRadius;
+  if(t.lidTilt<0) bottomRadius=Math.max(2, eyeRadius*(1+t.lidTilt*0.3)|0);
+  roundRectPath(cx-eyeWInt/2,cy-eyeHInt/4,eyeWInt,bottomH,bottomRadius); ctx.fill();
+  roundRectPath(cx-eyeWInt/2,topY,eyeWInt,topH,eyeRadius); ctx.fill();
+  // iris/core/pupil/highlight
+  const irisR=Math.max(2, innerHalfH*0.65*t.pupilScale), coreR=Math.max(1, innerHalfH*0.40*t.pupilScale);
+  ctx.fillStyle=hex565(blend(EYE_EDGE,EYE_CORE,0.4));
+  ctx.beginPath(); ctx.arc(cx+pupilXOff,cy+pupilYOff,irisR,0,7); ctx.fill();
+  let coreCol=brighten(EYE_CORE,glow*0.3);
+  if(thinking && (performance.now()%400)<200) coreCol=blend(coreCol,ACCENT,(thinkPulse/255)*0.4);
+  ctx.fillStyle=hex565(coreCol);
+  ctx.beginPath(); ctx.arc(cx+pupilXOff,cy+pupilYOff,coreR,0,7); ctx.fill();
+  const pupilR=Math.max(1,coreR*0.55);
+  ctx.fillStyle="rgb(2,6,16)";
+  ctx.beginPath(); ctx.arc(cx+pupilXOff,cy+pupilYOff,pupilR,0,7); ctx.fill();
+  const hlR=Math.max(1,coreR*0.35);
+  ctx.fillStyle=hex565(brighten(EYE_CORE,0.85));
+  ctx.beginPath(); ctx.arc(cx+pupilXOff-pupilR*0.6,cy+pupilYOff-pupilR*0.6,hlR,0,7); ctx.fill();
+}
+
+function frame(now){
+  const dt=Math.min(50, now-(frame.last||now)); frame.last=now;
+  // blink scheduler: start blink when due, finish when held long enough
+  if (frame.blinkUntil!==0 && now>=frame.blinkUntil){
+    frame.blinkUntil=0;
+    const rate=Math.max(0.15,blinkRate);
+    frame.nextBlink = now + (2500+Math.random()*2000)/rate;
+    if (Math.random()<0.12) frame.nextBlink = now + 200; // occasional double blink
+  }
+  if (frame.nextBlink===undefined) frame.nextBlink = now+3000;
+  if (now>=frame.nextBlink && frame.blinkUntil===0){ frame.blinkUntil = now+blinkHold; }
+  // gaze micro-wander
+  if (frame.wanderNext===undefined || now>=frame.wanderNext){
+    frame.wanderNext = now+1200+Math.random()*1600;
+    wanderX=(Math.random()*2-1)*0.06; wanderY=(Math.random()*2-1)*0.06;
+  }
+  if (thinking) thinkPulse=128+127*Math.sin(now/300);
+  smooth(dt);
+  // background gradient (fixed, matches firmware blend565 top->bottom)
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,hex565(BG_TOP)); g.addColorStop(1,hex565(BG_BOT));
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  for (let i=0;i<2;i++){
+    const t={...rig[i]};
+    if (frame.blinkUntil!==0 && now<frame.blinkUntil)
+      t.openness=Math.min(t.openness,(frame.blinkUntil-now)/blinkHold);
+    drawEye(i,t);
+  }
+  requestAnimationFrame(frame);
+}
+
+// ---------- controls ----------
+const em=document.getElementById("emotions");
+EMOTIONS.forEach((name,i)=>{ const b=document.createElement("button"); b.textContent=name.slice(0,4); b.title=name; b.onclick=()=>setEmotion(i); em.appendChild(b); });
+document.getElementById("speak").oninput=e=>speakAmp=+e.target.value;
+document.getElementById("bright").oninput=e=>brightness=+e.target.value;
+document.getElementById("thinkBtn").onclick=()=>setThinking(!thinking);
+document.getElementById("blinkBtn").onclick=()=>{ frame.blinkUntil=performance.now()+blinkHold; };
+setEmotion(0);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
