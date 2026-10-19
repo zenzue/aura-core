@@ -103,10 +103,10 @@ async def test_summarize_threshold(memory_store, settings):
     class MockLLM(LLMProvider):
         name = "mock"
 
-        async def generate_reply(self, system_prompt, messages, tools, json_schema, timeout_s):
+        async def generate_reply(self, messages, tools=None, system_prompt=None):
             return {"text": "Conversation summary: user said hello 3 times"}
 
-        async def health(self, timeout_s):
+        async def health(self, timeout_s=5.0):
             return True
 
     llm = MockLLM()
@@ -161,10 +161,10 @@ async def test_summarize_error(memory_store, settings):
     class ErrorLLM(LLMProvider):
         name = "error"
 
-        async def generate_reply(self, system_prompt, messages, tools, json_schema, timeout_s):
+        async def generate_reply(self, messages, tools=None, system_prompt=None):
             raise RuntimeError("LLM error")
 
-        async def health(self, timeout_s):
+        async def health(self, timeout_s=5.0):
             return False
 
     llm = ErrorLLM()

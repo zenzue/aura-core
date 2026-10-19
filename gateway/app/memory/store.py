@@ -100,7 +100,12 @@ class MemoryStore:
                 ),
             )
 
-            summary = resp.get("spoken_text") or resp.get("display_text") or ""
+            summary = (
+                resp.get("spoken_text")
+                or resp.get("display_text")
+                or resp.get("text")
+                or ""
+            )
             summary = str(summary).strip()
             if not summary:
                 return None
