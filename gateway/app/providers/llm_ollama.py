@@ -17,7 +17,7 @@ class OllamaLLMProvider(LLMProvider):
         super().__init__(settings)
         self.base_url = settings.ollama_base_url or "http://localhost:11434"
         self.model = settings.ollama_model or "llama3.1"
-        self.timeout = settings.llm_timeout or 30.0
+        self.timeout = settings.llm_timeout_s
 
     async def generate_reply(
         self,
@@ -70,7 +70,7 @@ class OllamaLLMProvider(LLMProvider):
                 logger.error(f"Ollama generate error: {e}")
                 raise
 
-    async def health(self) -> bool:
+    async def health(self, timeout_s: float = 5.0) -> bool:
         """Check Ollama provider health."""
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:

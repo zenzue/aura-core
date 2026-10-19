@@ -50,6 +50,15 @@ class MemoryStore:
             return msgs
         return [m for m in msgs if m.get("index", 0) > since]
 
+    async def recent_messages(self, conversation_id: str, limit: int = 200) -> List[Dict[str, Any]]:
+        """Async facade: last N messages for a conversation."""
+        msgs = self._store.get(conversation_id, [])
+        return list(msgs[-limit:]) if limit > 0 else list(msgs)
+
+    async def append_message(self, conversation_id: str, message: Dict[str, Any]) -> None:
+        """Async facade for remember()."""
+        self.remember(conversation_id, dict(message))
+
     def count_messages(self, conversation_id: str) -> int:
         """Count messages in conversation."""
         return len(self._store.get(conversation_id, []))

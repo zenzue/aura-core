@@ -1,331 +1,287 @@
-import asyncio
+"""HTTP handlers. Real provider calls only; no placeholder AI/STT/TTS.
+Missing provider => explicit error, never a fabricated result."""
+from __future__ import annotations
+
 import base64
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from litestar import Request, Response, get, post
-from litestar.exceptions import HTTPException
-from litestar.status_codes import HTTP_200_OK, HTTP_400_BAD_REQUEST, HTTP_502_BAD_GATEWAY
+from litestar import Request, get, post
 
 from app.config import Settings
-from app.schemas import InteractRequest, AuraResponse, DeviceStats, TTSRequest
-from app.providers.llm_base import ReplyParseError
+from app.schemas import (
+    AuraResponse,
+    DeviceStats,
+    InteractRequest,
+    TTSRequest,
+    ToolCall as ToolCallSchema,
+)
 
 logger = logging.getLogger(__name__)
 
 
-@get("/healthz")
+def _state(request: Request):
+    return request.app.state
+
+
+def _provider_name(obj) -> str | None:
+    name = getattr(obj, "name", None)
+    return name if isinstance(name, str) else None
+
+
+def _err(text: str) -> AuraResponse:
+    return AuraResponse(
+        spoken_text=text,
+        display_text=text,
+        emotion="neutral",
+        expression_intensity=0.7,
+        animation_hint="none",
+        action=None,
+    )
+
+
 async def health_check(request: Request) -> Dict[str, Any]:
-    """Health check endpoint."""
     return {"ok": True}
 
 
-@get("/v1/status")
 async def status(request: Request) -> Dict[str, Any]:
-    """Get system status including provider health."""
-    app_state = request.app.state
-    settings: Settings = app_state.settings
-    
-    # Check LLM provider
-    llm_health = False
-    llm_info = "none"
-    if app_state.llm:
-        llm_health = await app_state.llm.health()
-        llm_info = settings.ai_provider or "unknown"
-    
-    # Check STT provider
-    stt_health = False
-    if app_state.stt:
-        # TODO: Implement STT health check
-        stt_health = True  # Placeholder
-        stt_info = "whisper"  # Placeholder
-    
-    # Check TTS provider
-    tts_health = False
-    if app_state.tts:
-        # TODO: Implement TTS health check
-        tts_health = True  # Placeholder
-        tts_info = "piper"  # Placeholder
-    
+    state = _state(request)
+    settings: Settings = state.settings
+
+    async def _h(provider: Any) -> Dict[str, Any]:
+        if provider is None:
+            return {"healthy": False, "provider": "disabled"}
+        name = str(getattr(provider, "name", "unknown"))
+        try:
+            ok = bool(await provider.health(timeout_s=5.0))
+        except Exception:  # noqa: BLE001
+            ok = False
+        return {"healthy": ok, "provider": name}
+
     return {
-        "llm": {
-            "healthy": llm_health,
-            "provider": llm_info,
-            "model": settings.gemini_model or settings.ollama_model or settings.openai_model or "unknown",
-        },
-        "stt": {
-            "healthy": stt_health,
-            "provider": stt_info,
-        },
-        "tts": {
-            "healthy": tts_health,
-            "provider": tts_info,
-        },
+        "llm": await _h(state.llm),
+        "stt": await _h(state.stt),
+        "tts": await _h(state.tts),
     }
 
 
-@post("/v1/device_stats")
 async def device_stats(request: Request, data: DeviceStats) -> Dict[str, Any]:
-    """Update and cache device statistics."""
-    app_state = request.app.state
-    app_state.devstats.update(data.dict())
+    state = _state(request)
+    merged = {k: v for k, v in data.model_dump().items() if v is not None}
+    state.devstats.update(merged)
     return {"status": "updated"}
 
 
-@post("/v1/tts")
 async def tts_generate(request: Request, data: TTSRequest) -> AuraResponse:
-    """Generate TTS audio from text."""
-    app_state = request.app.state
-    settings = app_state.settings
-    
-    if not app_state.tts:
-        logger.warning("TTS provider not available")
-        return AuraResponse(
-            spoken_text=data.text,
-            display_text=data.text,
-            emotion="neutral",
-            expression_intensity=0.7,
-            animation_hint="none",
-            action="none",
-            audio_wav_b64=None,
-        )
-    
+    state = _state(request)
+    if state.tts is None:
+        logger.warning("tts endpoint requested but no provider configured")
+        return _err("speech synthesis is not configured on this gateway")
     try:
-        # TODO: Implement actual TTS generation
-        # This is a placeholder - actual implementation would call the TTS provider
-        # For now, return mock response
-        return AuraResponse(
-            spoken_text=data.text,
-            display_text=data.text,
-            emotion="neutral",
-            expression_intensity=0.7,
-            animation_hint="none",
-            action="none",
-            audio_wav_b64=None,  # Placeholder - would be base64 encoded WAV
-        )
-    except Exception as e:
-        logger.error(f"TTS generation failed: {e}")
-        return AuraResponse(
-            spoken_text=data.text,
-            display_text=data.text,
-            emotion="neutral",
-            expression_intensity=0.7,
-            animation_hint="none",
-            action="none",
-            audio_wav_b64=None,
-        )
+        wav = await state.tts.synthesize(data.text, timeout_s=60.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("tts failed: %s", exc)
+        return _err("speech synthesis failed")
+    audio_b64 = base64.b64encode(wav).decode("ascii") if wav else None
+    return AuraResponse(
+        spoken_text=data.text,
+        display_text=data.text,
+        emotion="neutral",
+        expression_intensity=0.7,
+        animation_hint="none",
+        action=None,
+        audio_wav_b64=audio_b64,
+        provider=_provider_name(state.tts),
+    )
 
 
-@post("/v1/interact")
 async def interact(request: Request, data: InteractRequest) -> AuraResponse:
-    """Main interaction endpoint handling STT -> LLM -> TTS pipeline."""
-    app_state = request.app.state
-    settings = app_state.settings
-    
-    # Step 1: Audio transcription (STT)
-    stt_text = None
-    if data.audio_wav_b64:
-        if not app_state.stt:
-            logger.warning("STT provider not available, using passthrough text")
-            stt_text = data.text or "Audio received but STT not available"
-        else:
-            try:
-                # TODO: Implement actual STT
-                # This is a placeholder - actual implementation would decode and transcribe
-                stt_text = data.text or "Transcribed audio"  # Placeholder
-                logger.info("STT transcription completed")
-            except Exception as e:
-                logger.error(f"STT failed: {e}")
-                # Return clear error response, never fake transcript
-                return AuraResponse(
-                    spoken_text="Sorry, I couldn't understand the audio",
-                    display_text="Audio processing error",
-                    emotion="concerned",
-                    expression_intensity=0.8,
-                    animation_hint="error",
-                    action="none",
-                    audio_wav_b64=None,
-                )
-    
-    # Use provided text if no audio or STT failed
-    user_text = stt_text or data.text
+    state = _state(request)
+    settings: Settings = state.settings
+
+    if not data.has_input():
+        return _err("I did not receive any input")
+
+    user_text: str | None = data.text or None
+    stt_text: str | None = None
+
+    # STT: only when audio supplied; explicit text does NOT fake a transcript.
+    if data.audio_wav_b64 and not user_text:
+        if state.stt is None:
+            logger.warning("interact: audio input but no STT provider")
+            return _err("voice input is not configured on this gateway")
+        try:
+            wav = base64.b64decode(data.audio_wav_b64)
+        except Exception:
+            return _err("audio data could not be decoded")
+        if len(wav) > settings.max_audio_bytes:
+            return _err("audio is too large")
+        try:
+            stt_text = (await state.stt.transcribe(wav, timeout_s=20.0) or "").strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("stt failed: %s", exc)
+            return _err("I could not understand the audio")
+        if not stt_text:
+            return _err("I did not catch that")
+        user_text = stt_text
+
     if not user_text:
+        return _err("I did not receive any input")
+
+    if state.llm is None:
+        logger.error("interact: no LLM provider configured")
         return AuraResponse(
-            spoken_text="I didn't receive any input",
-            display_text="No input received",
+            spoken_text="AI service unavailable",
+            display_text="AI service unavailable — no model provider configured",
             emotion="neutral",
             expression_intensity=0.7,
             animation_hint="none",
-            action="none",
-            audio_wav_b64=None,
+            action=None,
+            stt_text=stt_text,
         )
-    
-    # Step 2: Build conversation history
-    messages: List[Dict[str, Any]] = []
-    
-    # Add recent messages from memory if available
-    if app_state.memory and settings.enable_memory:
+
+    # history
+    messages: List[Dict[str, str]] = []
+    if state.memory is not None and settings.enable_memory and data.conversation_id:
         try:
-            recent = await app_state.memory.recent_messages(
-                conversation_id=data.conversation_id or "default",
-                limit=settings.history_max_messages or 10,
+            hist = await state.memory.recent_messages(
+                data.conversation_id, limit=settings.history_max_messages
             )
-            messages.extend(recent)
-        except Exception as e:
-            logger.warning(f"Failed to load memory: {e}")
-    
-    # Add current user message
+            messages.extend(
+                {"role": m["role"], "content": m["content"]}
+                for m in hist
+                if isinstance(m, dict)
+                and m.get("role") in ("user", "assistant")
+                and isinstance(m.get("content"), str)
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("memory history load failed: %s", exc)
     messages.append({"role": "user", "content": user_text})
-    
-    # Step 3: Build system prompt with personality and tools
-    personality = None
+
+    # system prompt + tools
+    system_prompt: str | None = None
     try:
         from app.personality import build_personality
-        personality = build_personality(settings)
-    except Exception as e:
-        logger.error(f"Failed to build personality: {e}")
-        personality = None
-    
-    system_prompt = None
-    tools_spec = None
-    
-    if app_state.tools:
-        try:
-            tools_spec = app_state.tools.specs_for_llm()
-        except Exception as e:
-            logger.warning(f"Failed to get tool specs: {e}")
-    
-    if personality:
-        system_prompt = personality.build_system_prompt(tools_spec)
-    
-    # Step 4: Generate LLM reply
-    if not app_state.llm:
-        logger.error("LLM provider not available")
-        return AuraResponse(
-            spoken_text="AI service temporarily unavailable",
-            display_text="Service unavailable",
-            emotion="concerned",
-            expression_intensity=0.8,
-            animation_hint="error",
-            action="none",
-            audio_wav_b64=None,
-        )
-    
+
+        tools_spec = None
+        if state.tools is not None:
+            try:
+                tools_spec = state.tools.specs_for_llm()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("tool specs failed: %s", exc)
+        system_prompt = build_personality(settings).build_system_prompt(tools_spec)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("personality build failed: %s", exc)
+        tools_spec = None
+
+    # LLM
     try:
-        raw_reply = await app_state.llm.generate_reply(
+        raw = await state.llm.generate_reply(
             messages=messages,
             tools=tools_spec,
             system_prompt=system_prompt,
         )
-        
-        # Parse and validate reply
-        try:
-            reply = app_state.llm.parse_llm_reply(raw_reply)
-        except ReplyParseError as e:
-            logger.error(f"LLM reply parse error: {e}")
-            # Return structured error instead of raw error
-            return AuraResponse(
-                spoken_text="Sorry, I'm having trouble processing my response",
-                display_text="Response processing error",
-                emotion="concerned",
-                expression_intensity=0.8,
-                animation_hint="error",
-                action="none",
-                audio_wav_b64=None,
-            )
-        
-        # Ensure required fields with defaults
-        spoken_text = reply.get("spoken_text", "")
-        display_text = reply.get("display_text", spoken_text)
-        emotion = reply.get("emotion", "neutral")
-        expression_intensity = reply.get("expression_intensity", 0.7)
-        animation_hint = reply.get("animation_hint", "none")
-        action = reply.get("action", "none")
-        
-        # Truncate spoken text if needed
-        max_spoken_chars = settings.max_spoken_chars or 240
-        if len(spoken_text) > max_spoken_chars:
-            spoken_text = spoken_text[:max_spoken_chars-3] + "..."
-            display_text = display_text[:max_spoken_chars-3] + "..." if len(display_text) > max_spoken_chars else display_text
-        
-        # Step 5: Tool execution (if any)
-        tool_trace = []
-        if "tool_calls" in reply and reply["tool_calls"]:
-            for tool_call in reply["tool_calls"]:
-                tool_name = tool_call.get("name")
-                tool_args = tool_call.get("arguments", {})
-                
-                if app_state.tools and tool_name:
-                    try:
-                        # Check if tool exists and execute
-                        # This would be implemented in the tools registry
-                        tool_result = await app_state.tools.call(
-                            name=tool_name,
-                            args=tool_args,
-                            timeout_s=settings.tool_timeout_s or 10,
-                        )
-                        tool_trace.append({"name": tool_name, "result": tool_result, "ok": True})
-                    except Exception as e:
-                        tool_trace.append({"name": tool_name, "error": str(e), "ok": False})
-        
-        # Step 6: TTS generation if requested
-        tts_audio = None
-        if data.tts and app_state.tts:
-            try:
-                # TODO: Implement actual TTS generation
-                # This would call the TTS provider with the spoken_text
-                tts_audio = None  # Placeholder
-                logger.info("TTS generation completed")
-            except Exception as e:
-                logger.error(f"TTS failed: {e}")
-                tts_audio = None
-        
-        final_response = AuraResponse(
-            spoken_text=spoken_text,
-            display_text=display_text,
-            emotion=emotion,
-            expression_intensity=expression_intensity,
-            animation_hint=animation_hint,
-            action=action,
-            audio_wav_b64=tts_audio,
-        )
-        
-    except Exception as e:
-        logger.error(f"LLM processing failed: {e}")
-        final_response = AuraResponse(
+        reply = state.llm.parse_llm_reply(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("LLM processing failed: %s", exc)
+        return AuraResponse(
             spoken_text="Sorry, I'm having trouble processing your request",
-            display_text="Processing error",
-            emotion="concerned",
-            expression_intensity=0.8,
-            animation_hint="error",
-            action="none",
-            audio_wav_b64=None,
+            display_text="LLM processing error",
+            emotion="neutral",
+            expression_intensity=0.7,
+            animation_hint="none",
+            action=None,
+            stt_text=stt_text,
         )
-    
-    # Step 7: Update memory
-    if app_state.memory and settings.enable_memory and data.conversation_id:
+
+    spoken = str(reply.get("spoken_text") or "").strip()
+    if not spoken:
+        return AuraResponse(
+            spoken_text="Sorry, I received an empty reply",
+            display_text="Empty LLM reply",
+            emotion="neutral",
+            expression_intensity=0.7,
+            animation_hint="none",
+            action=None,
+            stt_text=stt_text,
+        )
+    display = str(reply.get("display_text") or spoken)
+    emotion = str(reply.get("emotion") or "neutral")
+    intensity = float(reply.get("expression_intensity") or 1.0)
+    animation_hint = reply.get("animation_hint") if isinstance(reply.get("animation_hint"), str) else None
+
+    max_chars = settings.max_spoken_chars
+    if len(spoken) > max_chars:
+        spoken = spoken[: max_chars - 3] + "..."
+    if len(display) > settings.max_spoken_chars:
+        display = display[: max_chars - 3] + "..."
+
+    # tool calls requested by the model
+    tool_trace: List[Any] = []
+    for call in reply.get("tool_calls") or []:
+        if not isinstance(call, dict):
+            continue
+        name = str(call.get("name") or "")
+        args = call.get("arguments") or call.get("args") or {}
+        if not name:
+            continue
+        if state.tools is None:
+            tool_trace.append(ToolCallSchema(name=name, args=args, ok=False, detail="tools disabled"))
+            continue
         try:
-            # Append user message
-            await app_state.memory.append_message(
-                conversation_id=data.conversation_id,
-                role="user",
-                content=user_text,
+            res = await state.tools.call(name=name, args=args, timeout_s=settings.tool_timeout_s)
+            tool_trace.append(ToolCallSchema(
+                name=name, args=args, ok=bool(res.get("ok", True)),
+                detail=str(res.get("detail", ""))[:120],
+            ))
+        except Exception as exc:  # noqa: BLE001
+            tool_trace.append(ToolCallSchema(name=name, args=args, ok=False, detail=str(exc)[:120]))
+
+    # optional TTS
+    audio_b64: str | None = None
+    if data.tts and state.tts is not None:
+        try:
+            wav = await state.tts.synthesize(spoken, timeout_s=60.0)
+            audio_b64 = base64.b64encode(wav).decode("ascii") if wav else None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("interact TTS failed: %s", exc)
+    elif data.tts:
+        logger.info("interact: TTS requested but provider not configured")
+
+    # memory
+    if state.memory is not None and settings.enable_memory and data.conversation_id:
+        try:
+            await state.memory.append_message(
+                data.conversation_id, {"role": "user", "content": user_text}
             )
-            
-            # Append assistant response
-            await app_state.memory.append_message(
-                conversation_id=data.conversation_id,
-                role="assistant",
-                content=display_text,
+            await state.memory.append_message(
+                data.conversation_id, {"role": "assistant", "content": display}
             )
-            
-            # Maybe summarize
-            if settings.auto_summarize:
-                await app_state.memory.maybe_summarize(
-                    llm=app_state.llm,
-                    conversation_id=data.conversation_id,
-                )
-        except Exception as e:
-            logger.warning(f"Failed to update memory: {e}")
-    
-    return final_response
+            await state.memory.maybe_summarize(state.llm, data.conversation_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("memory append failed: %s", exc)
+
+    return AuraResponse(
+        spoken_text=spoken,
+        display_text=display,
+        emotion=emotion,
+        expression_intensity=intensity,
+        animation_hint=animation_hint,
+        action=None,
+        conversation_id=data.conversation_id,
+        tool_trace=tool_trace,
+        audio_wav_b64=audio_b64,
+        stt_text=stt_text,
+        provider=_provider_name(state.llm),
+    )
+
+
+def build_routes():
+    """Fresh handler objects per app (route handlers are per-Litestar-app)."""
+    return [
+        get(path="/healthz")(health_check),
+        get(path="/v1/status")(status),
+        post(path="/v1/interact", status_code=200)(interact),
+        post(path="/v1/device_stats", status_code=200)(device_stats),
+        post(path="/v1/tts", status_code=200)(tts_generate),
+    ]

@@ -100,7 +100,7 @@ async def test_ollama_health() -> None:
     with patch("httpx.AsyncClient") as mock_client:
         mock_response = Mock()
         mock_response.status_code = 200
-        mock_client.return_value.__aenter__.return_value.get.return_value = mock_response
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
         
         result = await provider.health()
         assert result is True
@@ -109,13 +109,13 @@ async def test_ollama_health() -> None:
 @pytest.mark.asyncio
 async def test_openai_health() -> None:
     """Test OpenAI health check."""
-    settings = Settings(openai_api_key="test-key")
+    settings = Settings(ai_provider="openai_compat", openai_compat_api_key="test-key")
     provider = OpenAICompatLLMProvider(settings)
     
     with patch("httpx.AsyncClient") as mock_client:
         mock_response = Mock()
         mock_response.status_code = 200
-        mock_client.return_value.__aenter__.return_value.get.return_value = mock_response
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(return_value=mock_response)
         
         result = await provider.health()
         assert result is True

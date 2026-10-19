@@ -26,36 +26,40 @@ class LLMProvider(ABC):
         pass
 
     @abstractmethod
-    async def health(self) -> bool:
+    async def health(self, timeout_s: float = 5.0) -> bool:
         """Check if provider is healthy/reachable."""
         pass
 
     @classmethod
     def parse_llm_reply(cls, raw: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
-        """Parse raw LLM response into normalized format."""
+        """Parse raw LLM response into a normalized dict. Raises ReplyParseError."""
         if isinstance(raw, dict):
             return raw
-        
-        try:
-            # Try to parse as JSON
-            data = json.loads(raw.strip())
-            return data
-        except json.JSONDecodeError:
-            # Try to extract JSON from text
-            raw = raw.strip()
-            if raw.startswith("```json"):
-                raw = raw[7:]
-            if raw.endswith("```"):
-                raw = raw[:-3]
-            
-            try:
-                data = json.loads(raw)
-                return data
-            except json.JSONDecodeError as e:
-                raise ReplyParseError(f"Failed to parse LLM reply: {e}")
+        if not isinstance(raw, str):
+            raise ReplyParseError("LLM reply is neither dict nor str")
 
-    @staticmethod
-    def REPLY_JSON_SCHEMA: Dict[str, Any] = {
+        candidates = [raw.strip()]
+        # strip ```json fences anywhere
+        if "```" in raw:
+            seg = raw.split("```json", 1)[-1] if "```json" in raw else raw.split("```", 1)[-1]
+            seg = seg.split("```", 1)[0]
+            candidates.append(seg.strip())
+        # brace extraction fallback
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start != -1 and end > start:
+            candidates.append(raw[start:end + 1])
+
+        for cand in candidates:
+            try:
+                data = json.loads(cand)
+                if isinstance(data, dict):
+                    return data
+            except json.JSONDecodeError:
+                continue
+        raise ReplyParseError("Failed to parse LLM reply as JSON")
+
+    REPLY_JSON_SCHEMA: Dict[str, Any] = {
         "type": "object",
         "properties": {
             "spoken_text": {
@@ -69,7 +73,7 @@ class LLMProvider(ABC):
             },
             "emotion": {
                 "type": "string",
-                "enum": ["happy", "neutral", "concerned", "excited", "calm"],
+                "enum": ["neutral", "happy", "excited", "affectionate", "curious", "listening", "thinking", "surprised", "confused", "sad", "frustrated", "sleepy", "sleeping", "speaking", "embarrassed", "alert"],
                 "description": "Emotion of the response",
             },
             "expression_intensity": {

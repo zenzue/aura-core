@@ -1,43 +1,52 @@
-"""Tools tests with HTTPX mock fixtures."""
+"""Tool tests: real plugins with mocked HTTP transports (no network)."""
 
-import pytest
-from unittest.mock import AsyncMock, patch
+import asyncio
+from unittest.mock import AsyncMock
+
 import httpx
-from datetime import datetime
+import pytest
 
 from app.config import Settings
 from app.tools import build_registry
 from app.tools.weather import Weather
 from app.tools.network_status import SpeedtestPlugin
 
-# Real response fixtures (from actual endpoints)
-GEOCODE_FIXTURE = """{
-  "results": [
-    {
-      "name": "Bangkok",
-      "latitude": 13.75398,
-      "longitude": 100.50144
-    }
-  ]
-}"""
+GEOCODE_FIXTURE = {
+    "results": [
+        {"name": "Bangkok", "latitude": 13.75398, "longitude": 100.50144},
+    ]
+}
 
-FORECAST_FIXTURE = """{
-  "latitude": 13.75398,
-  "longitude": 100.50144,
-  "current": {
-    "temperature_2m": 25.2,
-    "relative_humidity_2m": 95,
-    "weather_code": 81,
-    "wind_speed_10m": 4.9
-  },
-  "daily": {
-    "time": ["2026-10-19", "2026-10-20"],
-    "temperature_2m_max": [32.1, 31.2],
-    "temperature_2m_min": [24.1, 23.4]
-  }
-}"""
+FORECAST_FIXTURE = {
+    "latitude": 13.75398,
+    "longitude": 100.50144,
+    "current": {
+        "temperature_2m": 25.2,
+        "relative_humidity_2m": 95,
+        "weather_code": 81,
+        "wind_speed_10m": 4.9,
+    },
+    "daily": {
+        "time": ["2026-10-19", "2026-10-20"],
+        "temperature_2m_max": [32.1, 31.2],
+        "temperature_2m_min": [24.1, 23.4],
+    },
+}
 
-SPEEDTEST_FIXTURE = b"0" * 1024  # dummy data
+
+def _dispatch(request: httpx.Request) -> httpx.Response:
+    host = request.url.host or ""
+    if host == "geocoding-api.open-meteo.com":
+        name = request.url.params.get("name", "")
+        if name.lower() == "invalidcity123":
+            return httpx.Response(200, json={"results": []})
+        return httpx.Response(200, json=GEOCODE_FIXTURE)
+    if host == "api.open-meteo.com":
+        return httpx.Response(200, json=FORECAST_FIXTURE)
+    if host.endswith("speed.cloudflare.com"):
+        size = int(request.url.params.get("bytes", "1024"))
+        return httpx.Response(200, content=b"0" * size)
+    return httpx.Response(404, json={"detail": "unhandled mock host"})
 
 
 @pytest.fixture
@@ -51,138 +60,90 @@ def mock_settings():
 
 
 @pytest.fixture
-def mock_httpx_transport():
-    """Mock transport with real response fixtures."""
-    transport = httpx.AsyncMockTransport()
+def registry(mock_settings, monkeypatch):
+    real_cls = httpx.AsyncClient
 
-    # Geocoding mock
-    async def geocode_handler(request):
-        return httpx.Response(
-            status_code=200,
-            content=GEOCODE_FIXTURE,
-            headers={"Content-Type": "application/json"},
-        )
+    def factory(*args, **kwargs):
+        kwargs.pop("transport", None)
+        return real_cls(*args, transport=httpx.MockTransport(_dispatch), **kwargs)
 
-    # Forecast mock
-    async def forecast_handler(request):
-        return httpx.Response(
-            status_code=200,
-            content=FORECAST_FIXTURE,
-            headers={"Content-Type": "application/json"},
-        )
-
-    # Speedtest mock
-    async def speedtest_handler(request):
-        return httpx.Response(
-            status_code=200,
-            content=SPEEDTEST_FIXTURE,
-            headers={"Content-Type": "application/octet-stream"},
-        )
-
-    transport.register_uri(
-        "GET", "https://geocoding-api.open-meteo.com/v1/search", handler=geocode_handler
-    )
-    transport.register_uri(
-        "GET", "https://api.open-meteo.com/v1/forecast", handler=forecast_handler
-    )
-    transport.register_uri(
-        "GET", "https://speed.cloudflare.com/__down", handler=speedtest_handler
-    )
-
-    return transport
-
-
-@pytest.fixture
-def registry(mock_settings, mock_httpx_transport):
-    with patch("httpx.AsyncClient") as mock_client_class:
-        mock_client_class.return_value.__aenter__.return_value.transport = mock_httpx_transport
-        return build_registry(mock_settings)
+    monkeypatch.setattr("app.tools.weather.httpx.AsyncClient", factory)
+    monkeypatch.setattr("app.tools.network_status.httpx.AsyncClient", factory)
+    return build_registry(mock_settings)
 
 
 @pytest.mark.asyncio
 async def test_weather_tool(registry):
-    """Test weather tool with mock responses."""
     weather = registry.get("weather")
     assert isinstance(weather, Weather)
 
-    result = await weather.call({"location": "Bangkok"})
+    result = await weather.call({"location": "Bangkok"}, timeout_s=5.0)
     assert result["ok"] is True
     assert "current" in result
     assert "forecast" in result
     assert result["current"]["temperature"] == 25.2
-    assert result["current"]["weather"] == "Moderate showers"  # code 81
+    assert result["current"]["weather"] == "Moderate showers"  # WMO code 81
 
 
 @pytest.mark.asyncio
 async def test_weather_default_location(registry):
-    """Test weather with default location."""
     weather = registry.get("weather")
-    result = await weather.call({"location": "default"})
+    result = await weather.call({"location": "default"}, timeout_s=5.0)
     assert result["ok"] is True
-    # Should use settings default coordinates
     assert "current" in result
 
 
 @pytest.mark.asyncio
 async def test_weather_unknown_location(registry):
-    """Test weather with unknown location."""
     weather = registry.get("weather")
-    result = await weather.call({"location": "InvalidCity123"})
+    result = await weather.call({"location": "InvalidCity123"}, timeout_s=5.0)
     assert result["ok"] is False
     assert "not found" in result["error"]
 
 
 @pytest.mark.asyncio
 async def test_speedtest_tool(registry):
-    """Test speedtest tool."""
     speedtest = registry.get("speedtest")
     assert isinstance(speedtest, SpeedtestPlugin)
 
-    result = await speedtest.call({"size_kb": 1024})
+    result = await speedtest.call({"size_kb": 1024}, timeout_s=5.0)
     assert result["ok"] is True
-    assert result["bytes"] == 1024
+    assert result["bytes"] == 1024 * 1024
     assert "seconds" in result
     assert "mbps" in result
 
 
 @pytest.mark.asyncio
 async def test_speedtest_rate_limit(registry):
-    """Test speedtest rate limiting."""
     speedtest = registry.get("speedtest")
-
-    # First call
-    await speedtest.call({"size_kb": 1024})
-    # Second call immediately (should be rate limited)
-    result = await speedtest.call({"size_kb": 1024})
+    speedtest._last_test_time = 0.0
+    await speedtest.call({"size_kb": 1024}, timeout_s=5.0)
+    result = await speedtest.call({"size_kb": 1024}, timeout_s=5.0)
     assert result["ok"] is False
     assert "Rate limit" in result["error"]
 
 
 @pytest.mark.asyncio
 async def test_local_time_tool(registry):
-    """Test local time tool."""
     registry._tools["get_local_time"].call = AsyncMock(return_value={
         "ok": True,
         "iso": "2026-10-19T12:34:56+07:00",
-        "human": "2026-10-19 12:34:56 +07:00"
+        "human": "2026-10-19 12:34:56 +07:00",
     })
-    result = await registry.call("get_local_time", {})
+    result = await registry.call("get_local_time", {}, timeout_s=5.0)
     assert result["ok"] is True
-    assert "iso" in result
+    assert "iso" in str(result["result"])
 
 
 @pytest.mark.asyncio
 async def test_tool_not_found(registry):
-    """Test calling unknown tool."""
-    result = await registry.call("unknown_tool", {})
+    result = await registry.call("unknown_tool", {}, timeout_s=5.0)
     assert result["ok"] is False
     assert "not found" in result["error"]
 
 
 @pytest.mark.asyncio
 async def test_tool_timeout(registry):
-    """Test tool timeout."""
-    # Mock a tool that hangs
     class SlowTool:
         name = "slow"
         read_only = True
@@ -201,12 +162,7 @@ async def test_tool_timeout(registry):
 
 
 @pytest.mark.asyncio
-async def test_server_monitor_disabled(registry, mock_settings):
-    """Test server monitor tools when disabled."""
-    mock_settings.enable_server_monitoring = False
-    registry = build_registry(mock_settings)
-
-    # All server monitor functions should return disabled
+async def test_server_monitor_disabled():
     from app.tools.server_monitor import get_cpu_usage, get_disk_usage
 
     cpu = await get_cpu_usage()
@@ -220,11 +176,7 @@ async def test_server_monitor_disabled(registry, mock_settings):
 
 @pytest.mark.asyncio
 async def test_read_only_guard(registry):
-    """Test read-only guard on tools."""
-    # Weather is read-only
     weather = registry.get("weather")
     assert weather.read_only is True
-
-    # Try to call with non-read-only args (should be ignored by contract)
-    result = await weather.call({"location": "Bangkok", "write": True})
-    assert result["ok"] is True  # still returns data
+    for tool in registry._tools.values():
+        assert tool.read_only is True

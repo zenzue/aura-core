@@ -30,19 +30,16 @@ class ToolRegistry:
         return self._tools[name]
 
     def specs_for_llm(self) -> List[Dict[str, Any]]:
-        """Return LLM-readable tool specs (function calling)."""
+        """Return LLM-readable tool specs (flat: name/description/parameters)."""
         specs = []
         for name in sorted(self._names):
             tool = self._tools[name]
-            spec = {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.spec().get("description", ""),
-                    "parameters": tool.spec().get("parameters", {}),
-                },
-            }
-            specs.append(spec)
+            tool_spec = tool.spec()
+            specs.append({
+                "name": tool.name,
+                "description": tool_spec.get("description", ""),
+                "parameters": tool_spec.get("parameters", {}),
+            })
         return specs
 
     async def call(self, name: str, args: dict[str, Any], timeout_s: float) -> dict[str, Any]:
@@ -78,12 +75,12 @@ def build_registry(settings: Settings, devstats: Callable[[], Any] | None = None
     if settings.enable_weather:
         from .weather import Weather
 
-        registry.register(Weather())
+        registry.register(Weather(settings))
 
     # Local time (always available)
     from .local_time import LocalTimePlugin
 
-    registry.register(LocalTimePlugin())
+    registry.register(LocalTimePlugin(settings))
 
     # Network diagnostics
     if settings.enable_network_diagnostics:
@@ -91,13 +88,13 @@ def build_registry(settings: Settings, devstats: Callable[[], Any] | None = None
 
         registry.register(DeviceStatusPlugin(devstats))
         registry.register(NetworkStatusPlugin())
-        registry.register(SpeedtestPlugin())
+        registry.register(SpeedtestPlugin(settings))
 
     # Server monitoring
     if settings.enable_server_monitoring:
         from .server_monitor import ServerMonitor
 
-        registry.register(ServerMonitor())
+        registry.register(ServerMonitor(settings))
 
     return registry
 
@@ -108,8 +105,10 @@ class BaseTool(ToolPlugin):
 
     def __init__(self, **kwargs: Any):
         super().__init__()
-        self.name = self.__class__.__name__.lower().replace("plugin", "")
-        self.read_only = self.__class__.read_only
+        cls = self.__class__
+        if not hasattr(type(self), "name") or "name" not in getattr(cls, "__dict__", {}):
+            self.name = cls.__name__.lower().replace("plugin", "")
+        self.read_only = cls.read_only
 
     def spec(self) -> dict[str, Any]:  # pragma: no cover
         raise NotImplementedError

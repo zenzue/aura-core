@@ -15,10 +15,10 @@ class OpenAICompatLLMProvider(LLMProvider):
 
     def __init__(self, settings: Settings) -> None:
         super().__init__(settings)
-        self.base_url = settings.openai_base_url or "https://api.openai.com/v1"
-        self.model = settings.openai_model or "gpt-3.5-turbo"
-        self.api_key = settings.openai_api_key
-        self.timeout = settings.llm_timeout or 30.0
+        self.base_url = (settings.openai_compat_base_url or "https://api.openai.com/v1").rstrip('/')
+        self.model = settings.openai_compat_model or "gpt-4o-mini"
+        self.api_key = settings.openai_compat_api_key
+        self.timeout = settings.llm_timeout_s
 
     async def generate_reply(
         self,
@@ -93,7 +93,7 @@ class OpenAICompatLLMProvider(LLMProvider):
                 logger.error(f"OpenAI generate error: {e}")
                 raise
 
-    async def health(self) -> bool:
+    async def health(self, timeout_s: float = 5.0) -> bool:
         """Check OpenAI provider health."""
         if not self.api_key:
             return False

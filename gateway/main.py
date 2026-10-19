@@ -1,34 +1,21 @@
-import asyncio
+"""AURA gateway entrypoint."""
 import logging
 
-from litestar import Litestar
-from litestar.config import Config
-
 from app.app import create_app
-from app.config import Settings, load_settings
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from app.config import load_settings
 
 
 def run() -> None:
-    """Run the AURA gateway server."""
-    # Load settings
+    """Load settings, build the app, serve via uvicorn."""
     settings = load_settings()
-    
-    # Create app
-    app = create_app(settings)
-    
-    # Run uvicorn programmatically
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger("aura.gateway")
+    logger.info("starting AURA gateway on %s:%s", settings.gateway_host, settings.gateway_port)
     import uvicorn
-    
-    uvicorn.run(
-        app,
-        host=settings.host or "0.0.0.0",
-        port=settings.port or 8000,
-        reload=settings.debug or False,
-        log_level=logging.getLevelName(settings.log_level or "INFO"),
-    )
+
+    app = create_app(settings)
+    uvicorn.run(app, host=settings.gateway_host, port=settings.gateway_port,
+                log_level="info")
 
 
 if __name__ == "__main__":

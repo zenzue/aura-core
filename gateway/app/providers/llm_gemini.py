@@ -1,40 +1,40 @@
+"""Gemini LLM provider (google-genai SDK)."""
+from __future__ import annotations
+
 import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-import httpx
-from google.genai import ClientV1beta1AsyncClient as Client
-from google.genai.types import (
-    GenerateContentConfig,
-    Tool as GenAITool,
-    ToolConfig,
-)
-
 from app.config import Settings
-from app.providers.llm_base import LLMProvider, ReplyParseError
+from app.providers.llm_base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
+try:
+    import google.genai as genai
+    from google.genai import types as genai_types
+except ImportError:
+    genai = None
+    genai_types = None
+
 
 class GeminiLLMProvider(LLMProvider):
-    """Google Generative AI LLM provider."""
+    name = "gemini"
 
     def __init__(self, settings: Settings) -> None:
         super().__init__(settings)
-        self.client: Optional[Client] = None
+        self._client = None
         self.model = settings.gemini_model or "gemini-2.0-flash"
         self.api_key = settings.gemini_api_key
 
-    async def _get_client(self) -> Client:
-        """Get or create async client."""
-        if self.client is None:
-            self.client = Client(
-                api_key=self.api_key,
-                httpx_client=httpx.AsyncClient(
-                    timeout=httpx.Timeout(30.0),
-                ),
-            )
-        return self.client
+    def _get_client(self):
+        if genai is None:
+            raise RuntimeError("'google-genai' package not installed")
+        if not self.api_key:
+            raise RuntimeError("GEMINI_API_KEY not set")
+        if self._client is None:
+            self._client = genai.Client(api_key=self.api_key)
+        return self._client
 
     async def generate_reply(
         self,
@@ -42,73 +42,52 @@ class GeminiLLMProvider(LLMProvider):
         tools: Optional[List[Dict[str, Any]]] = None,
         system_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Generate reply using Google Generative AI."""
-        if not self.api_key:
-            raise ValueError("Gemini API key not configured")
+        client = self._get_client()
 
-        client = await self._get_client()
-
-        # Convert messages to Gemini format
-        gemini_messages = []
+        contents = []
         for msg in messages:
-            role = "user" if msg.get("role") == "user" else "assistant"
-            gemini_messages.append(
-                {"role": role, "parts": [{"text": msg.get("content", "")}]}
-            )
+            role = "user" if msg.get("role") == "user" else "model"
+            contents.append({"role": role, "parts": [{"text": str(msg.get("content", ""))}]})
 
-        # Build tool specs for Gemini
-        gemini_tools: Optional[List[GenAITool]] = None
+        config_kwargs: Dict[str, Any] = {
+            "temperature": self.settings.gemini_temperature,
+            "top_p": self.settings.gemini_top_p,
+            "candidate_count": 1,
+            "response_mime_type": "application/json",
+        }
+        if system_prompt:
+            config_kwargs["system_instruction"] = system_prompt
         if tools:
-            gemini_tools = []
+            declarations = []
             for tool in tools:
-                gemini_tools.append(
-                    GenAITool(
-                        function_declarations=[
-                            {
-                                "name": tool["name"],
-                                "description": tool.get("description", ""),
-                                "parameters": tool.get("parameters", {}),
-                                "strict": False,
-                            }
-                        ]
-                    )
-                )
+                declarations.append(genai_types.FunctionDeclaration(
+                    name=tool["name"],
+                    description=tool.get("description", ""),
+                    parameters=tool.get("parameters"),
+                ))
+            config_kwargs["tools"] = [genai_types.Tool(function_declarations=declarations)]
 
-        # Generate content
-        try:
-            response = await client.aio.generate_content(
+        resp = await asyncio.wait_for(
+            client.aio.models.generate_content(
                 model=self.model,
-                contents=gemini_messages,
-                tools=gemini_tools,
-                generation_config=GenerateContentConfig(
-                    temperature=self.settings.gemini_temperature or 0.7,
-                    top_p=self.settings.gemini_top_p or 0.9,
-                    candidate_count=1,
-                ),
-                safety_settings=[],  # Use default safety settings
-            )
+                contents=contents,
+                config=genai_types.GenerateContentConfig(**config_kwargs),
+            ),
+            timeout=self.settings.llm_timeout_s,
+        )
 
-            # Parse response
-            if response.candidates and response.candidates[0].content:
-                raw_reply = response.candidates[0].content.parts[0].text
-                return self.parse_llm_reply(raw_reply)
-            else:
-                raise ValueError("No response from Gemini")
-
-        except Exception as e:
-            logger.error(f"Gemini generate error: {e}")
-            raise
-
-    async def health(self) -> bool:
-        """Check Gemini provider health."""
-        if not self.api_key:
-            return False
-
+        text = ""
         try:
-            client = await self._get_client()
-            # Simple health check - list models
-            await client.aio.list_models()
-            return True
-        except Exception as e:
-            logger.warning(f"Gemini health check failed: {e}")
-            return False
+            text = resp.text or ""
+        except Exception:  # noqa: BLE001
+            try:
+                cand = resp.candidates[0].content.parts[0].text
+                text = cand or ""
+            except Exception:  # noqa: BLE001
+                text = ""
+        if not text.strip():
+            raise ValueError("Gemini returned an empty reply")
+        return self.parse_llm_reply(text)
+
+    async def health(self, timeout_s: float = 5.0) -> bool:
+        return genai is not None and bool(self.api_key)

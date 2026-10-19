@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from app.audio.wav_utils import build_wav
 from app.config import Settings
 from app.schemas import TTSProvider
 
@@ -68,20 +69,24 @@ class TTSPiper(TTSProvider):
 
     async def synthesize(self, text: str, timeout_s: float = 15.0) -> bytes:
         """Synthesize text to WAV via to_thread with timeout."""
-        voice = self._lazy_voice()
-
-        async def _synthesize_thread() -> bytes:
-            with voice.synthesize_wav(text) as wav_file:
-                return wav_file.read()
-
         try:
-            wav_bytes = await asyncio.to_thread(_synthesize_thread, timeout=timeout_s)
-            return wav_bytes
-        except TimeoutError:
-            raise asyncio.TimeoutError("TTS synthesis timed out")
-        except Exception as e:
-            # Never raise out; gateway catches and returns error
-            return b""
+            voice = self._lazy_voice()
+        except RuntimeError:
+            # Voice file missing: try downloading once, then fail honestly.
+            if not await self.ensure_voice():
+                raise RuntimeError("piper voice not available (not downloaded)")
+            self._voice = None
+            voice = self._lazy_voice()
+
+        def _synthesize_thread() -> bytes:
+            chunks = bytearray()
+            rate = 22050
+            for chunk in voice.synthesize(text):
+                chunks.extend(chunk.audio_int16_bytes)
+                rate = chunk.sample_rate
+            return build_wav(bytes(chunks), rate=rate)
+
+        return await asyncio.wait_for(asyncio.to_thread(_synthesize_thread), timeout_s)
 
     async def health(self, timeout_s: float = 5.0) -> bool:
         """Health check: voice file exists."""

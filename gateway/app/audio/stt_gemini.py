@@ -41,13 +41,16 @@ class STTGemini(STTProvider):
 
         try:
             resp = await asyncio.wait_for(
-                client.aio.generate_content(
+                client.aio.models.generate_content(
                     model=model,
                     contents=[prompt, part],
                 ),
                 timeout=timeout_s,
             )
-            text = resp.text or ""
+            try:
+                text = resp.text or ""
+            except Exception:  # noqa: BLE001
+                text = resp.candidates[0].content.parts[0].text or ""
             return text.strip()
         except Exception as e:
             # Clean error: never raise, return error dict?
@@ -56,19 +59,5 @@ class STTGemini(STTProvider):
             return ""
 
     async def health(self, timeout_s: float = 5.0) -> bool:
-        """Health check: try generate_content with tiny audio."""
-        try:
-            client = self._lazy_client()
-            # Minimal test: dummy bytes, expect any error ≠ auth
-            dummy = b"RIFF...."  # fake wav header
-            part = genai.types.Part.from_bytes(data=dummy, mime_type="audio/wav")
-            await asyncio.wait_for(
-                client.aio.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=["test", part],
-                ),
-                timeout=timeout_s,
-            )
-            return True
-        except Exception:
-            return False
+        """Health check: package installed and API key present."""
+        return genai is not None and bool(self.settings.gemini_api_key)

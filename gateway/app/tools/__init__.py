@@ -2,7 +2,6 @@
 
 from .registry import ToolRegistry, build_registry
 from .weather import Weather
-from .local_time import get_local_time
 from .network_status import DeviceStatusPlugin, NetworkStatusPlugin, SpeedtestPlugin
 from .server_monitor import (
     ServerMonitor,
@@ -22,8 +21,7 @@ __all__ = [
     "ToolRegistry",
     "build_registry",
     "Weather",
-    "get_local_time",
-    "DeviceStatusPlugin",
+        "DeviceStatusPlugin",
     "NetworkStatusPlugin",
     "SpeedtestPlugin",
     "ServerMonitor",

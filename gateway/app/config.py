@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     ollama_model: str = Field("", validation_alias="OLLAMA_MODEL")
     ollama_format: str = Field("json", validation_alias="OLLAMA_FORMAT")
     openai_compat_base_url: str = Field("", validation_alias="OPENAI_COMPAT_BASE_URL")
+    openai_compat_api_key: str = Field("", validation_alias="OPENAI_COMPAT_API_KEY")
     openai_compat_model: str = Field("", validation_alias="OPENAI_COMPAT_MODEL")
 
     stt_provider: str = Field("faster_whisper", validation_alias="STT_PROVIDER")
@@ -35,6 +36,12 @@ class Settings(BaseSettings):
     tts_provider: str = Field("piper", validation_alias="TTS_PROVIDER")
     tts_voice_path: str = Field("", validation_alias="TTS_VOICE_PATH")
     tts_voice: str = Field("en_US-lessac-medium", validation_alias="TTS_VOICE")
+
+    gemini_temperature: float = Field(0.7, validation_alias="GEMINI_TEMPERATURE")
+    gemini_top_p: float = Field(0.9, validation_alias="GEMINI_TOP_P")
+    ollama_temperature: float = Field(0.8, validation_alias="OLLAMA_TEMPERATURE")
+    ollama_top_p: float = Field(0.9, validation_alias="OLLAMA_TOP_P")
+    openai_temperature: float = Field(0.7, validation_alias="OPENAI_TEMPERATURE")
 
     gateway_host: str = Field("127.0.0.1", validation_alias="GATEWAY_HOST")
     gateway_port: int = Field(8765, validation_alias="GATEWAY_PORT")

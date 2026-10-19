@@ -3,7 +3,8 @@ import pytest
 from unittest.mock import Mock, AsyncMock
 
 from app.api import health_check, status, interact, device_stats, tts_generate
-from app.config import Settings, InteractRequest, DeviceStats, TTSRequest, AuraResponse
+from app.config import Settings
+from app.schemas import InteractRequest, DeviceStats, TTSRequest, AuraResponse
 
 
 @pytest.mark.asyncio

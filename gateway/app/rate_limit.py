@@ -1,52 +1,59 @@
-import asyncio
+"""Per-client sliding-window rate limiting as a custom ASGI middleware."""
+from __future__ import annotations
+
+import json
 import time
 from collections import deque
-from typing import Dict, Any
+from typing import Any, Deque, Dict, Tuple
 
-from litestar import Request
-from litestar.middleware.rate_limit import RateLimit
+from litestar.middleware.base import MiddlewareProtocol
+from litestar.types import ASGIApp, Receive, Scope, Send
 
 from app.config import Settings
 
+BYPASS_PATHS = {"/healthz", "/docs", "/openapi.json", "/schema"}
+
 
 class RateLimiter:
-    """Sliding window rate limiter per client IP."""
+    """Sliding window (60s) limiter keyed by string."""
 
-    def __init__(self, settings: Settings, key_func: callable) -> None:
-        self.settings = settings
-        self.key_func = key_func
-        self.requests: Dict[str, deque] = {}  # key -> deque of timestamps
+    def __init__(self, max_per_min: int) -> None:
+        self.max_per_min = max_per_min
+        self._hits: Dict[str, Deque[float]] = {}
 
     def is_allowed(self, key: str) -> bool:
-        """Check if request is allowed based on rate limit."""
-        now = time.time()
-        window_start = now - 60  # 60-second window
-        
-        if key not in self.requests:
-            self.requests[key] = deque()
-        
-        # Clean old requests outside window
-        while self.requests[key] and self.requests[key][0] < window_start:
-            self.requests[key].popleft()
-        
-        # Check if within limit
-        if len(self.requests[key]) >= self.settings.rate_limit_per_min:
+        if self.max_per_min <= 0:
+            return True
+        now = time.monotonic()
+        dq = self._hits.setdefault(key, deque())
+        while dq and dq[0] < now - 60.0:
+            dq.popleft()
+        if len(dq) >= self.max_per_min:
             return False
-        
-        # Add current request
-        self.requests[key].append(time.time())
+        dq.append(now)
         return True
 
-    async def rate_limit_handler(self, request: Request, response_handler: callable) -> Any:
-        """Rate limit middleware handler."""
-        key = self.key_func(request)
-        
-        if not self.is_allowed(key):
-            from litestar import Response
-            return Response(
-                content={"error": "Rate limit exceeded"},
-                status_code=429,
-                headers={"Retry-After": "60"},
-            )
-        
-        return await response_handler(request)
+
+class RateLimitMiddleware(MiddlewareProtocol):
+    def __init__(self, app: ASGIApp, settings: Settings) -> None:
+        self.app = app
+        self.limiter = RateLimiter(settings.rate_limit_per_min)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> Any:
+        if scope["type"] != "http" or scope.get("path") in BYPASS_PATHS:
+            return await self.app(scope, receive, send)
+        client = scope.get("client")
+        key: Tuple[str, int] = client if client else ("unknown", 0)
+        key_str = f"{key[0]}:{key[1]}" if isinstance(key, tuple) else str(key)
+        if not self.limiter.is_allowed(key_str):
+            body = json.dumps({"detail": "rate limit exceeded"}).encode()
+            await send({
+                "type": "http.response.start",
+                "status": 429,
+                "headers": [(b"content-type", b"application/json"),
+                            (b"retry-after", b"60"),
+                            (b"content-length", str(len(body)).encode())],
+            })
+            await send({"type": "http.response.body", "body": body})
+            return
+        return await self.app(scope, receive, send)

@@ -1,6 +1,7 @@
 """Faster-Whisper STT provider with lazy import and VAD filter."""
 
 import asyncio
+import io
 from typing import Any
 
 from app.config import Settings
@@ -40,9 +41,10 @@ class STTFasterWhisper(STTProvider):
 
         # VAD filter: split on silence (using beam search VAD)
         # Faster-whisper already includes VAD, but we explicitly enable
-        segments, _ = await asyncio.to_thread(
+        segments, _ = await asyncio.wait_for(
+            asyncio.to_thread(
             model.transcribe,
-            wav,
+            io.BytesIO(wav),
             beam_size=1,
             best_of=5,
             patience=1.0,
@@ -58,15 +60,12 @@ class STTFasterWhisper(STTProvider):
             word_timestamps=False,
             vad_filter=True,  # <--- explicit
             vad_parameters=dict(threshold=0.5, window_size=3, min_speech_duration=0.1),
-        )
+            ), timeout_s)
 
         text = " ".join(segment.text.strip() for segment in segments)
         return text
 
     async def health(self, timeout_s: float = 5.0) -> bool:
-        """Health check: try loading model."""
-        try:
-            self._lazy_load()
-            return True
-        except Exception:
-            return False
+        """Health check: package importable. Model loads (may download) on
+        first transcribe; health must not trigger a big download."""
+        return WhisperModel is not None

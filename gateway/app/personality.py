@@ -1,8 +1,8 @@
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from enum import Enum
 
-from app.config import Settings
+from app.config import EMOTIONS, Settings
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +13,17 @@ class Action(Enum):
     VIBRATE = "vibrate"
     REMEMBER = "remember"
     PROACTIVE = "proactive"
+
+
+def _tool_names_csv(tools_spec: Optional[List[Dict[str, Any]]]) -> str:
+    """Extract tool names from flat or nested OpenAI-style specs."""
+    names: List[str] = []
+    for spec in tools_spec or []:
+        if "name" in spec:
+            names.append(str(spec["name"]))
+        else:
+            names.append(str(spec.get("function", {}).get("name", "?")))
+    return ", ".join(sorted(names))
 
 
 class Persona:
@@ -35,7 +46,7 @@ Response format: You MUST return a JSON object matching the required schema:
 
 Important rules:
 - spoken_text must be speakable and <= 240 characters
-- emotion must be one of: {', '.join(app.config.EMOTIONS)}
+- emotion must be one of: {', '.join(sorted(EMOTIONS))}
 - expression_intensity is a float between 0.5 and 1.0
 - animation_hint is a short advisory token (max 10 chars)
 - action can only be: {', '.join([a.value for a in Action])}
@@ -51,23 +62,28 @@ Available tools: {len(tools_spec)} tools are available. Use them when relevant."
         return prompt
 
     def _get_response_schema(self, tools_spec: Optional[List[Dict[str, Any]]] = None) -> str:
-        """Get the JSON schema for LLM responses."""
-        schema = """{
-    "spoken_text": "string (speakable text, <=240 chars)",
-    "display_text": "string (optional, defaults to spoken_text)",
-    "emotion": "string (one of happy, neutral, concerned, excited, calm)",
-    "expression_intensity": "float (0.5-1.0)",
-    "animation_hint": "string (short advisory token)",
-    "action": "string (one of none, vibrate, remember, proactive)",
-    "tool_calls": "array of objects (optional) with:"""
-        
+        """Get the JSON schema description injected into the system prompt."""
+        emotion_list = ", ".join(sorted(EMOTIONS))
+        action_list = ", ".join(a.value for a in Action)
+        schema = (
+            "{\n"
+            '  "spoken_text": "string (speakable text, <=240 chars)",\n'
+            '  "display_text": "string (optional, defaults to spoken_text)",\n'
+            f'  "emotion": "string (one of {emotion_list})",\n'
+            '  "expression_intensity": "float (0.5-1.0)",\n'
+            '  "animation_hint": "string (short advisory token)",\n'
+            f'  "action": "string (one of {action_list})",\n'
+            '  "tool_calls": "array of objects (optional) with:'
+        )
+
         if tools_spec:
-            schema += f"""
-        "name": "string (one of {', '.join([t['name'] for t in tools_spec])})", 
-        "arguments": "object (tool-specific arguments)"""
-        
-        schema += """
-}"""
+            schema += (
+                '\n    "name": "string (one of '
+                + _tool_names_csv(tools_spec)
+                + ')",\n    "arguments": "object (tool-specific arguments)'
+            )
+
+        schema += "\n}"
         return schema
 
 
@@ -81,7 +97,7 @@ PERSONAS: Dict[str, Persona] = {
 
 def build_personality(settings: Settings) -> Persona:
     """Build personality based on settings."""
-    persona_class = PERSONAS.get(settings.persona or "playful_assistant", PERSONAS["playful_assistant"])
+    persona_class = PERSONAS.get(settings.pet_personality or "playful_assistant", PERSONAS["playful_assistant"])
     return persona_class(settings)
 
 

@@ -76,7 +76,7 @@ def test_build_wav_roundtrip():
 def test_rms_amplitude():
     """Test RMS calculation."""
     # Full scale alternating
-    pcm = b"\x7f\xff" + b"\x80\x00" + b"\x7f\xff" + b"\x80\x00"
+    pcm = b"\xff\x7f" + b"\x00\x80" + b"\xff\x7f" + b"\x00\x80"
     # Samples: 32767, -32768, 32767, -32768
     # Mean squares: (32767² + (-32768)² + ...) / 4 ≈ (1.07e9 + 1.07e9 + ...) / 4 ≈ 1.07e9
     # RMS ≈ sqrt(1.07e9) ≈ 32767

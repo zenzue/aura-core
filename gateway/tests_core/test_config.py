@@ -1,7 +1,8 @@
 import pytest
 from pathlib import Path
 
-from app.config import Settings, load_settings, EMOTIONS
+from app.config import Settings
+from app.config import load_settings, EMOTIONS
 
 
 def test_settings_default() -> None:
@@ -31,9 +32,9 @@ def test_emotions_enum() -> None:
     """Test emotions are properly defined."""
     assert "neutral" in EMOTIONS
     assert "happy" in EMOTIONS
-    assert "concerned" in EMOTIONS  # From our personality config
-    # Note: 'concerned' is not in the original EMOTIONS set, but our personality uses it
-    # This is acceptable as the personality system handles it
+    assert "concerned" not in EMOTIONS  # pinned 16-emotion set
+    assert "confused" in EMOTIONS
+    assert len(EMOTIONS) == 16
 
 
 def test_load_settings() -> None:

@@ -22,8 +22,7 @@ def mock_settings():
     )
 
 
-@pytest.fixture
-def mock_gemini_settings():
+def gemini_settings():
     return Settings(
         stt_provider="gemini",
         tts_provider="gemini_tts",
@@ -34,9 +33,8 @@ def mock_gemini_settings():
 # Test STT providers (mock)
 @pytest.mark.asyncio
 async def test_stt_faster_whisper_missing_package(monkeypatch):
-    """Test STT when package missing."""
-    monkeypatch.setattr(STTFasterWhisper, "_model", None)  # force reload
-    with patch.dict("sys.modules", {"faster_whisper": None}):
+        """Factory returns None when package cannot be imported."""
+        monkeypatch.setitem(__import__("sys").modules, "faster_whisper", None)
         settings = Settings(stt_provider="faster_whisper")
         stt = build_stt(settings)
         assert stt is None
@@ -56,7 +54,7 @@ async def test_stt_gemini_missing_key():
 @pytest.mark.asyncio
 async def test_stt_gemini_transcribe_error():
     """Test Gemini STT error handling."""
-    settings = mock_gemini_settings()
+    settings = gemini_settings()
     stt = build_stt(settings)
     assert isinstance(stt, STTGemini)
 
@@ -99,6 +97,7 @@ async def test_tts_piper_voice_download(capfd):
     assert isinstance(result, bool)
 
 
+@pytest.mark.requires_models
 @pytest.mark.asyncio
 async def test_tts_piper_synthesize_real(capfd):
     """Real piper synthesis test (requires_models)."""
@@ -147,7 +146,7 @@ async def test_tts_gemini_missing_key():
 @pytest.mark.asyncio
 async def test_tts_gemini_synthesize_error():
     """Test Gemini TTS error handling."""
-    settings = mock_gemini_settings()
+    settings = gemini_settings()
     tts = build_tts(settings)
     assert isinstance(tts, TTSGemini)
 
