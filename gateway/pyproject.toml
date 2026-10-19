@@ -12,13 +12,15 @@ dependencies = [
     "uvicorn>=0.30",
 ]
 
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "anyio>=4"]
+
 [project.optional-dependencies]
 gemini = ["google-genai>=2.31,<3"]
 whisper = [
     "faster-whisper>=1.2,<2",
 ]
 piper = ["piper-tts>=1.8,<2", "onnxruntime>=1.20"]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "anyio>=4"]
 
 [project.scripts]
 aura-gateway = "app.main:run"
