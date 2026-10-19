@@ -1,5 +1,6 @@
 """Faster-Whisper STT provider with lazy import and VAD filter."""
 
+from __future__ import annotations
 import asyncio
 import io
 from typing import Any

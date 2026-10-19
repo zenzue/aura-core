@@ -1,4 +1,5 @@
 """Gemini STT provider with lazy import and error handling."""
+from __future__ import annotations
 
 import asyncio
 import os

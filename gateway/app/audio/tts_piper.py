@@ -1,5 +1,6 @@
 """Piper TTS provider with voice download and lazy loading."""
 
+from __future__ import annotations
 import asyncio
 import logging
 import sys
