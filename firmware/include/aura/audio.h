@@ -40,13 +40,12 @@ class AudioBus {
   float lastLevel() const;   // 0..1 RMS proxy of recent playback for animation
 
   void diagnostics(AudioDiagOut& out);
-  uint8_t micStateDbg() const { return _mic_state_dbg; }
+  uint8_t micStateDbg() const;
 
  private:
   AudioBus() = default;
   uint8_t _volume = 196;
   volatile bool _capturing = false;
-  volatile uint8_t _mic_state_dbg = 0;
   float _last_level = 0.f;
   AudioDiagOut _diag {};
 };

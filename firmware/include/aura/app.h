@@ -4,6 +4,7 @@
 #include <aura/anim.h>
 #include <aura/renderer.h>
 #include <aura/hal.h>
+#include <aura/events.h>
 
 namespace aura {
 

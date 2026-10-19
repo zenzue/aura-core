@@ -1,0 +1,25 @@
+# Example server monitoring config (copy to config.yaml)
+# Enable in settings: enable_server_monitoring=true
+
+servers:
+  - name: "web"
+    host: "127.0.0.1"
+    port: 80
+    agent_token: "${SERVER_AGENT_TOKEN}"  # env var
+    allowlist: ["GET /health", "GET /status"]
+  
+  - name: "database"
+    host: "127.0.0.1"
+    port: 5432
+    agent_token: "${DB_AGENT_TOKEN}"
+    allowlist: ["postgresql://"]
+
+  - name: "mqtt"
+    host: "127.0.0.1"
+    port: 1883
+    agent_token: "${MQTT_AGENT_TOKEN}"
+    allowlist: ["subscribe", "publish"]
+
+# Global settings
+timeout_s: 5.0
+interval_s: 30
