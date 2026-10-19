@@ -116,8 +116,20 @@ P1 face+touch+boot → P2 audio mic/speaker real capture/play → P3 wifi+gatewa
 P4 voice loop STT→LLM→TTS → P5 wake-word (honest) → P6 personality/memory/behaviors →
 P7 network tools/OTA design → P8 servo-ready interfaces.
 
-## 6. Verification status (as of writing)
+## 6. Verification status (as of 2026-10-20)
 
-- Toolchain builds `m5stack-core2`: **compile-verified** (`pio run` SUCCESS, espressif32@6.13.0 + M5GFX/M5Unified pinned).
-- All API facts above: source-verified (cloned M5Unified/M5GFX master Oct 2026), **device-unverified**.
+| Item | Status | Evidence |
+|---|---|---|
+| Toolchain builds `m5stack-core2` | compile-verified | `pio run -e m5stack-core2` SUCCESS (RAM 0.7%, Flash 23.5%); espressif32@6.13.0 + M5GFX/M5Unified pinned |
+| Firmware units (emotion/face/audio/touch/power/tilt/config/app) | compile-verified | integrated build, no device run |
+| Gateway API + services | test-verified (dev machine) | pytest 85 passed, 1 skipped |
+| TTS->STT roundtrip on dev machine | verified | piper en_US-lessac-medium -> faster-whisper base, transcription matched |
+| Gateway with no providers configured | verified honest errors | TestClient, no fake replies |
+| esp-sr wake-word feasibility | research-verified (source inspection) | docs/wake-word.md |
+| Face simulator (browser) | sim-verified | simulator/serve.sh |
+| Display/touch/mic/speaker/IMU/power on Core2 | **device-unverified** | no board attached |
+| Real end-to-end voice conversation | **device-unverified** | needs device + gateway on network |
+| Wake word via real audio | **not implemented**, never claimed | see docs/wake-word.md |
+
+- All API facts above: source-verified (cloned M5Unified/M5GFX/esp-sr master Oct 2026), **device-unverified**.
 - No audio/wake/face behavior claimed working on hardware yet.
