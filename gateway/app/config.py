@@ -14,7 +14,7 @@ EMOTIONS = {
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", populate_by_name=True)
 
     pet_name: str = Field("AURA", validation_alias="PET_NAME")
     pet_personality: str = Field("playful_assistant", validation_alias="PET_PERSONALITY")
