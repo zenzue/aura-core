@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 from typing import Any, Dict, List
 
 from litestar import Request, get, post
 
 from app.config import Settings
+
+from app.audio.wav_utils import parse_wav, rms
 from app.schemas import (
+    WakeRequest,
+    WakeResponse,
     AuraResponse,
     DeviceStats,
     InteractRequest,
@@ -63,6 +68,50 @@ async def status(request: Request) -> Dict[str, Any]:
         "stt": await _h(state.stt),
         "tts": await _h(state.tts),
     }
+
+
+
+async def wake(request: Request, data: WakeRequest) -> WakeResponse:
+    """Gateway-side wake detection: transcribe a VAD-gated WAV chunk and match
+    the configured wake regex. Honest errors only: disabled/no-STT return a
+    reason, never fabricate detections. Opt-in via settings (docs/wake-word.md)."""
+    settings: Settings = _state(request).settings
+    if not settings.wake_enabled:
+        return WakeResponse(woke=False, reason="disabled")
+
+    stt = _state(request).stt
+    if stt is None:
+        return WakeResponse(woke=False, reason="no stt provider configured")
+
+    try:
+        wav = base64.b64decode(data.audio_b64, validate=True)
+    except Exception:
+        return WakeResponse(woke=False, reason="invalid base64 audio")
+    if not wav:
+        return WakeResponse(woke=False, reason="empty audio")
+    if len(wav) > int(settings.max_audio_bytes):
+        return WakeResponse(woke=False, reason="audio too large")
+
+    try:
+        parsed = parse_wav(wav)
+    except ValueError as exc:
+        return WakeResponse(woke=False, reason=f"bad wav: {exc}")
+    if rms(parsed.pcm) < settings.wake_min_rms:
+        return WakeResponse(woke=False, reason="silence")
+
+    try:
+        text = await stt.transcribe(wav, timeout_s=settings.wake_max_audio_s + 10.0)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("wake: stt failed: %s", exc)
+        return WakeResponse(woke=False, reason="stt failed")
+
+    text = text.strip()
+    if not text:
+        return WakeResponse(woke=False, reason="no speech", stt_provider=stt.name)
+    woke = bool(re.search(settings.wake_regex, text, flags=re.IGNORECASE))
+    logger.info("wake check: text=%r woke=%s", text[:80], woke)
+    return WakeResponse(woke=woke, reason="match" if woke else "no match",
+                        text=text, stt_provider=stt.name)
 
 
 async def device_stats(request: Request, data: DeviceStats) -> Dict[str, Any]:
@@ -281,6 +330,7 @@ def build_routes():
     return [
         get(path="/healthz")(health_check),
         get(path="/v1/status")(status),
+        post(path="/v1/wake", status_code=200)(wake),
         post(path="/v1/interact", status_code=200)(interact),
         post(path="/v1/device_stats", status_code=200)(device_stats),
         post(path="/v1/tts", status_code=200)(tts_generate),

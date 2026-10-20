@@ -91,6 +91,19 @@ class TTSRequest(BaseModel):
     voice: str | None = None
 
 
+class WakeRequest(BaseModel):
+    """Base64-encoded mono s16 WAV chunk from the device's VAD gate."""
+    audio_b64: str = ""
+    client_id: str | None = None
+
+
+class WakeResponse(BaseModel):
+    woke: bool = False
+    reason: str = "disabled"
+    text: str | None = None
+    stt_provider: str | None = None
+
+
 class HealthOut(BaseModel):
     ok: bool = True
     llm: str = "unknown"

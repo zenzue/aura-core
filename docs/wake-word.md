@@ -60,6 +60,6 @@ and reading its Kconfig.projbuild, lib/ targets and release notes, plus Espressi
 - [x] esp-sr master inspection (Kconfig gates, lib targets) - done 2026-10-20
 - [x] Espressif customization process verified (paid fee, corpus sizes) - done 2026-10-20
 - [x] Plan A touch-to-talk implemented (firmware compiles; hardware unverified)
-- [ ] Plan B gateway wake-detection - not implemented
+- [x] Plan B gateway wake endpoint `/v1/wake` (opt-in, stub-tested; device chunk streaming pending)
 - [ ] Plan C IDF5 migration - not started
 - [ ] Real-audio verification on device - needs hardware

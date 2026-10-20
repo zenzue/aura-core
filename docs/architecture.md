@@ -125,6 +125,7 @@ P7 network tools/OTA design → P8 servo-ready interfaces.
 | Gateway API + services | test-verified (dev machine) | pytest 85 passed, 1 skipped |
 | TTS->STT roundtrip on dev machine | verified | piper en_US-lessac-medium -> faster-whisper base, transcription matched |
 | Gateway with no providers configured | verified honest errors | TestClient, no fake replies |
+| Wake/name-mode endpoint `/v1/wake` (opt-in) | test-verified | stub STT, 6 unit tests; device chunk streaming pending |
 | esp-sr wake-word feasibility | research-verified (source inspection) | docs/wake-word.md |
 | Face simulator (browser) | sim-verified | simulator/serve.sh |
 | Display/touch/mic/speaker/IMU/power on Core2 | **device-unverified** | no board attached |

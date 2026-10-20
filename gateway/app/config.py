@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     openai_compat_model: str = Field("")
 
     stt_provider: str = Field("faster_whisper")
+
+    # Wake/name mode (gateway-side ASR keyword spotting; opt-in, see docs/wake-word.md)
+    wake_enabled: bool = Field(False)
+    wake_regex: str = Field(r"^(hey[ ,]*aura|aura[ ,]*robot|aura)\b")
+    wake_max_audio_s: float = Field(10.0)
+    wake_min_rms: float = Field(500.0)
     stt_model_size: str = Field("base")
     tts_provider: str = Field("piper")
     tts_voice_path: str = Field("")
