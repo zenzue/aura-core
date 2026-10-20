@@ -32,8 +32,10 @@ jobs:
         working-directory: firmware
     steps:
       - uses: actions/checkout@v4
-      - uses: platformio/setup-platformio--action@v1
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install PlatformIO
+        run: pip install platformio
       - name: Build m5stack-core2
         run: pio run -e m5stack-core2
