@@ -1,18 +1,10 @@
 // PetApp.cpp - AURA application state machine + event pump (main task)
-// Phase-1 test harness behavior:
-//   - Tap screen: gaze follows + pet at repeated taps
-//   - Hold 700ms: listening anim + capture stub
-//   - Top-left corner tap (x<48&&y<32): toggle diagnostics
-//   - In diagnostics: tap cycles 16 emotions, hold: exit
-//
-// Implementation note: All engine/renderer methods are called as declared.
-// If any method is missing internal behavior (e.g., startCapture fails),
-// the app still works - onListening is set true so face works, just logs.
 
 #include <aura/app.h>
 #include <aura/events.h>
 #include <aura/audio.h>
 #include <aura/log.h>
+#include <aura/net.h>
 
 namespace aura {
 
@@ -21,6 +13,10 @@ static FaceRenderer s_renderer;
 static TouchInput s_touchInput;
 static PowerMonitor s_powerMonitor;
 static TiltMonitor s_tiltMonitor;
+
+static constexpr size_t kMaxAudioSamples = 160000;
+static int16_t* s_captureBuffer = nullptr;
+static size_t s_captureLen = 0;
 
 // Toast timeout (ms)
 static constexpr uint32_t kToastDurationMs = 4000;
@@ -71,6 +67,11 @@ void PetApp::boot() {
     s_renderer.banner("AURA", kDefaultAccent565);
     _boot_banner_until_set = true;
 
+    _gatewayClient.begin();
+    _gatewayClient.setPowerMonitor(&s_powerMonitor);
+    _wifiManager.begin(PetApp::onNetStatus);
+    _wifi_init_done = true;
+
     // Initial render after banner delay handled in tick
     _state = AppState::FACE;
 
@@ -84,6 +85,11 @@ void PetApp::tick() {
     s_touchInput.update();
     s_powerMonitor.update();
     s_tiltMonitor.update();
+
+    if (_wifi_init_done) {
+        _wifiManager.update();
+        _gatewayClient.update();
+    }
 
     // Poll EventBus with timeout=0, drain fully each tick
     Event e;
@@ -160,13 +166,9 @@ void PetApp::handleEvent(const Event& e) {
         case EventKind::TOUCH_HOLD_BEGIN: {
             s_engine.onListening(true);
             s_engine.onActivity();
-            // Start capture (Phase 1: stub callback just posts event)
+            _capturing_audio = true;
             AudioBus::instance().startCapture(
-                kMaxUtteranceMs, nullptr,
-                [](void* /*ctx*/, const int16_t* /*pcm16*/, size_t /*samples*/) {
-                    // Phase 1: callback just posts event, stores nothing
-                    // Phase 2 will consume the audio data
-                });
+                kMaxUtteranceMs, this, PetApp::onAudioCaptured);
             break;
         }
 
@@ -240,25 +242,108 @@ void PetApp::toggleDiagnostics() {
 
 void PetApp::renderDiagnostics() {
     bool mic_ok = AudioBus::instance().micStateDbg() != 0;
-    s_renderer.status(false, false, mic_ok);
+    bool wifi_ok = _wifi_init_done && _wifiManager.isConnected();
+    s_renderer.status(wifi_ok, _gatewayClient.isOnline(), mic_ok);
 
     int bat_pct = s_powerMonitor.batteryPercent();
     bool charging = s_powerMonitor.isCharging();
     bool tilt_ok = true;
+    int rssi = _wifi_init_done ? _wifiManager.getRSSI() : 0;
 
-    char diag_line[40];
-    snprintf(diag_line, sizeof(diag_line), "%s|%d%%|%s|tilt:%s|fps:%.0f",
+    uint32_t now_ms = millis();
+    if (_wifi_init_done && now_ms - _last_stats_ms > kStatsReportMs) {
+      _last_stats_ms = now_ms;
+      _gatewayClient.reportDeviceStats(bat_pct, charging, rssi);
+    }
+
+    char diag_line[50];
+    snprintf(diag_line, sizeof(diag_line), "%s|%d%%|%s|rssi:%d|tilt:%s",
              _settings.petName,
              bat_pct,
              charging ? "CHG" : "BAT",
-             tilt_ok ? "OK" : "N/A",
-             s_renderer.lastFps());
+             rssi,
+             tilt_ok ? "OK" : "N/A");
     
     s_renderer.toast(diag_line, kDefaultAccent565);
 }
 
 void PetApp::updateProactive(uint32_t now_ms) {
     (void)now_ms;
+}
+
+void PetApp::onNetStatus(const char* status_text, bool online) {
+    AURA_LOGF("Net status: %s online=%d", status_text ? status_text : "null", online);
+}
+
+void PetApp::onAudioCaptured(void* ctx, const int16_t* pcm16, size_t samples) {
+    PetApp* self = static_cast<PetApp*>(ctx);
+    if (!self || !pcm16 || samples == 0) return;
+    
+    if (!s_captureBuffer) {
+        s_captureBuffer = static_cast<int16_t*>(heap_caps_malloc(
+            kMaxAudioSamples * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    }
+    if (!s_captureBuffer) return;
+    
+    size_t copyLen = samples < kMaxAudioSamples ? samples : kMaxAudioSamples;
+    memcpy(s_captureBuffer, pcm16, copyLen * sizeof(int16_t));
+    s_captureLen = copyLen;
+    
+    AURA_LOGF("Audio captured samples=%zu", copyLen);
+    
+    if (self->_gatewayClient.isOnline()) {
+        self->_gatewayClient.interactAudio(s_captureBuffer, s_captureLen,
+                                           PetApp::onGatewayInteract, self);
+    } else {
+        AURA_LOGF("Gateway offline, using local fallback");
+        s_engine.onListening(false);
+        s_engine.onPet();
+    }
+}
+
+void PetApp::onGatewayInteract(void* ctx, const GatewayResponse* resp, bool ok) {
+    PetApp* self = static_cast<PetApp*>(ctx);
+    if (!self) return;
+    
+    self->_capturing_audio = false;
+    s_engine.onListening(false);
+    
+    if (!ok || !resp || !resp->parse_ok) {
+        AURA_LOGF("Gateway interact failed or invalid response");
+        s_engine.onPet();
+        return;
+    }
+    
+    Emotion emotion;
+    if (emotionFromString(resp->emotion, emotion)) {
+        s_engine.setEmotion(emotion, resp->expression_intensity);
+    }
+    
+    if (strcmp(resp->action_type, "vibrate") == 0 && resp->action_level > 0) {
+        s_powerMonitor.vibrate(resp->action_level, 
+                               resp->action_ms > 0 ? resp->action_ms : 100);
+    }
+    
+    if (resp->has_audio && resp->wav && resp->wav_len > 0) {
+        const size_t len = resp->wav_len;
+        uint8_t* wav = static_cast<uint8_t*>(
+            heap_caps_malloc(len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        if (wav) {
+            memcpy(wav, resp->wav, len);
+            // playWavAsync copies into its own slot before returning; the
+            // caller frees its buffer once the call completes.
+            if (!AudioBus::instance().playWavAsync(wav, len, nullptr, nullptr)) {
+                AURA_LOGF("playWavAsync rejected len=%zu", len);
+            }
+            heap_caps_free(wav);
+        } else {
+            AURA_LOGW("playback alloc failed len=%zu", len);
+        }
+    }
+    freeGatewayResponseAudio(*const_cast<GatewayResponse*>(resp));
+    
+    AURA_LOGF("Gateway response: emotion=%s intensity=%.2f action=%s",
+              resp->emotion, resp->expression_intensity, resp->action_type);
 }
 
 }  // namespace aura

@@ -22,7 +22,7 @@ enum class Emotion : uint8_t {
   SURPRISED, CONFUSED, SAD, FRUSTRATED, SLEEPY, SLEEPING, SPEAKING,
   EMBARRASSED, ALERT, COUNT_
 };
-inline bool emotionFromString(const char* s, Emotion& out); // impl in EmotionEngine.cpp
+bool emotionFromString(const char* s, Emotion& out); // impl in EmotionEngine.cpp
 
 const char* emotionName(Emotion e);
 
