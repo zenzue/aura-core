@@ -15,8 +15,8 @@
    microexpression on emotion change), status dot styling.
 6. Audio pipeline on device: capture VAD framing, gateway STT, TTS playback queue,
    barge-in (mic pause while playing), AEC absent - half-duplex constraints documented.
-7. Memory: move in-memory store to SQLite (single-user, privacy: add retention +
-   forget UI).
+7. [done at store level] Memory: SQLite persistence with summarization; still open:
+   retention policy + user-facing forget UI.
 8. Performance/heap audit: AudioBus buffer sizing vs display/face cache; measure heap
    minimum on device during worst-case (hold-to-talk -> play TTS with status dots).
 9. Tools: real weather/ time (already), speedtest via gateway with honest measurement;

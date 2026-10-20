@@ -7,8 +7,9 @@ from app.config import Settings
 
 
 @pytest.fixture
-def settings() -> Settings:
+def settings(tmp_path) -> Settings:
     return Settings(
+        gateway_data_dir=tmp_path / "gw",
         ai_provider="ollama",
         ollama_model="test-model",
         gemini_api_key="test-key",

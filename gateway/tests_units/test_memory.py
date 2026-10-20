@@ -1,4 +1,4 @@
-"""Memory store tests."""
+"""Memory store tests: CRUD, summarization, SQLite persistence."""
 
 import pytest
 
@@ -7,10 +7,11 @@ from app.memory import MemoryStore
 
 
 @pytest.fixture
-def settings():
+def settings(tmp_path):
     return Settings(
         summarise_every=5,
         llm_timeout_s=10.0,
+        gateway_data_dir=tmp_path,
     )
 
 
@@ -175,3 +176,58 @@ async def test_summarize_error(memory_store, settings):
     # Messages unchanged
     msgs = memory_store.get_messages(cid)
     assert len(msgs) == 3
+
+@pytest.mark.asyncio
+async def test_memory_persistence_across_instances(tmp_path):
+    store1 = MemoryStore(Settings(gateway_data_dir=tmp_path, summarise_every=100))
+    store1.remember("c1", {"id": "a", "role": "user", "content": "persist me"})
+    store1.remember("c1", {"id": "b", "role": "assistant", "content": "and me"})
+    store1.close()
+
+    store2 = MemoryStore(Settings(gateway_data_dir=tmp_path, summarise_every=100))
+    msgs = store2.get_messages("c1")
+    assert [m["content"] for m in msgs] == ["persist me", "and me"]
+
+    store2.forget("c1", "a")
+    store2.close()
+
+    store3 = MemoryStore(Settings(gateway_data_dir=tmp_path, summarise_every=100))
+    assert store3.count_messages("c1") == 1
+    assert store3.get_messages("c1")[0]["id"] == "b"
+    store3.close()
+
+
+@pytest.mark.asyncio
+async def test_memory_forget_all_persisted(tmp_path):
+    store1 = MemoryStore(Settings(gateway_data_dir=tmp_path, summarise_every=100))
+    store1.remember("c1", {"id": "x", "role": "user", "content": "1"})
+    assert store1.forget("c1") == 1
+    store1.close()
+
+    store2 = MemoryStore(Settings(gateway_data_dir=tmp_path, summarise_every=100))
+    assert store2.count_messages("c1") == 0
+    store2.close()
+
+
+@pytest.mark.asyncio
+async def test_memory_summary_persisted(tmp_path):
+    settings = Settings(gateway_data_dir=tmp_path, summarise_every=2)
+    store1 = MemoryStore(settings)
+    store1.remember("c1", {"id": "1", "role": "user", "content": "a"})
+    store1.remember("c1", {"id": "2", "role": "user", "content": "b"})
+
+    class SummLLM:
+        async def generate_reply(self, messages, tools=None, system_prompt=None):
+            return {"spoken_text": "Two user messages."}
+
+        async def health(self, timeout_s=5.0):
+            return True
+
+    assert await store1.maybe_summarize(SummLLM(), "c1") == "Two user messages."
+    store1.close()
+
+    store2 = MemoryStore(settings)
+    msgs = store2.get_messages("c1")
+    assert len(msgs) == 3
+    assert msgs[-1]["summary"] is True
+    store2.close()

@@ -122,7 +122,8 @@ P7 network tools/OTA design → P8 servo-ready interfaces.
 |---|---|---|
 | Toolchain builds `m5stack-core2` | compile-verified | `pio run -e m5stack-core2` SUCCESS (RAM 0.7%, Flash 23.5%); espressif32@6.13.0 + M5GFX/M5Unified pinned |
 | Firmware units (emotion/face/audio/touch/power/tilt/config/app) | compile-verified | integrated build, no device run |
-| Gateway API + services | test-verified (dev machine) | pytest 85 passed, 1 skipped |
+| Gateway API + services | test-verified (dev machine) | pytest; suite green in both dep modes |
+| Memory persistence (SQLite via aiosqlite-free stdlib store) | test-verified | persistence across store instances, forget/summary round-trips |
 | TTS->STT roundtrip on dev machine | verified | piper en_US-lessac-medium -> faster-whisper base, transcription matched |
 | Gateway with no providers configured | verified honest errors | TestClient, no fake replies |
 | Wake/name-mode endpoint `/v1/wake` (opt-in) | test-verified | stub STT, 6 unit tests; device chunk streaming pending |

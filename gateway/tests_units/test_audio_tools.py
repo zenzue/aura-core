@@ -191,8 +191,8 @@ async def test_weather_parse_real_shape():
 
 # ---------- memory store ----------
 
-def test_memory_remember_and_recent():
-    settings = Settings(enable_memory=True, summarise_every=4)
+def test_memory_remember_and_recent(tmp_path):
+    settings = Settings(enable_memory=True, summarise_every=4, gateway_data_dir=tmp_path)
     store = MemoryStore(settings)
     store.remember("c1", {"role": "user", "content": "hi"})
     store.remember("c1", {"role": "assistant", "content": "hello"})
@@ -201,8 +201,8 @@ def test_memory_remember_and_recent():
     assert messages[0]["content"] == "hi"
 
 
-def test_memory_forget_one_and_all():
-    settings = Settings(enable_memory=True, summarise_every=100)
+def test_memory_forget_one_and_all(tmp_path):
+    settings = Settings(enable_memory=True, summarise_every=100, gateway_data_dir=tmp_path)
     store = MemoryStore(settings)
     store.remember("c1", {"id": "m1", "role": "user", "content": "a"})
     store.remember("c1", {"id": "m2", "role": "user", "content": "b"})
@@ -212,8 +212,8 @@ def test_memory_forget_one_and_all():
 
 
 @pytest.mark.asyncio
-async def test_memory_maybe_summarize_triggers_at_threshold():
-    settings = Settings(enable_memory=True, summarise_every=3)
+async def test_memory_maybe_summarize_triggers_at_threshold(tmp_path):
+    settings = Settings(enable_memory=True, summarise_every=3, gateway_data_dir=tmp_path)
     store = MemoryStore(settings)
     for i in range(3):
         store.remember("c1", {"role": "user", "content": f"m{i}"})
@@ -229,8 +229,8 @@ async def test_memory_maybe_summarize_triggers_at_threshold():
 
 
 @pytest.mark.asyncio
-async def test_memory_maybe_summarize_below_threshold_returns_none():
-    settings = Settings(enable_memory=True, summarise_every=10)
+async def test_memory_maybe_summarize_below_threshold_returns_none(tmp_path):
+    settings = Settings(enable_memory=True, summarise_every=10, gateway_data_dir=tmp_path)
     store = MemoryStore(settings)
     store.remember("c1", {"role": "user", "content": "hello"})
 
@@ -242,8 +242,8 @@ async def test_memory_maybe_summarize_below_threshold_returns_none():
 
 
 @pytest.mark.asyncio
-async def test_memory_summarize_llm_failure_returns_none_no_raise():
-    settings = Settings(enable_memory=True, summarise_every=1)
+async def test_memory_summarize_llm_failure_returns_none_no_raise(tmp_path):
+    settings = Settings(enable_memory=True, summarise_every=1, gateway_data_dir=tmp_path)
     store = MemoryStore(settings)
     store.remember("c1", {"role": "user", "content": "hello"})
 
