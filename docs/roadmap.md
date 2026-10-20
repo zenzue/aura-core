@@ -7,10 +7,10 @@
 2. Gateway wake-detection endpoint (Plan B in docs/wake-word.md): VAD-gated
    mic streaming from device + gateway ASR name-match. Opt-in UI flag + LED/face
    listening indicator.
-3. Wi-Fi provisioning on device (AP mode fallback + saved credentials in NVS/ConfigStore).
-4. Gateway HTTP client on device: /v1/interact, /v1/tts, /v1/stt, /v1/healthz;
-   reconnect/backoff; devstats reporting (battery/tilt/wifi RSSI) from device_status
-   (RSSI only; no fabricated speed claims).
+3. [firmware-side implemented, device-unverified] Wi-Fi provisioning on device (AP mode fallback + saved credentials in NVS/ConfigStore).
+4. [firmware-side implemented, device-unverified] Gateway HTTP client on device:
+   /v1/interact, /v1/tts, /v1/wake, /v1/device_stats (60s reporting), healthz;
+   async pump state machine (no blocking in render path).
 5. Face polish: idle expression drift, saccade model, transition presets (blink
    microexpression on emotion change), status dot styling.
 6. Audio pipeline on device: capture VAD framing, gateway STT, TTS playback queue,
