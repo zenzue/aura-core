@@ -105,6 +105,8 @@ class GatewayClientImpl {
   }
   
   bool isOnline() const { return _online; }
+  bool isBusy() const { return _busy; }
+  bool hasUrl() const { return _gateway_url[0] != '\0'; }
   
   void healthz(GatewayClient::HealthCb cb, void* ctx) {
     if (_busy || !validateUrl()) {
@@ -610,6 +612,14 @@ void GatewayClient::update() {
 
 bool GatewayClient::isOnline() const {
   return g_gatewayImpl.isOnline();
+}
+
+bool GatewayClient::isBusy() const {
+  return g_gatewayImpl.isBusy();
+}
+
+bool GatewayClient::hasUrl() const {
+  return g_gatewayImpl.hasUrl();
 }
 
 void GatewayClient::healthz(HealthCb cb, void* ctx) {

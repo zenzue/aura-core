@@ -140,3 +140,19 @@ pio run -e m5stack-core2 -t upload
   captive portal submit, interact roundtrip on LAN, playback rates (22050 Hz
   piper), heap headroom under worst-case (capture + request + response + slot
   concurrently in PSRAM).
+
+## Wake mode (Plan B device side)
+
+- DeviceSettings.flags bit2 = wakeMode (kFlagWakeMode), default OFF, persisted via ConfigStore NVS.
+- Tap bottom-right corner zone (x>=260, y>=200; status-dot area, outside diagnostics
+  corner) toggles wake mode; toast feedback "wake mode on/off".
+- When enabled: PetApp starts a 2.5s VAD-bounded mic capture every ~1.2s whenever idle
+  (no capture/playback/HTTP in flight, gateway online+configured, engine not SLEEPY/SLEEPING).
+- Captured chunk -> POST /v1/wake (no transcript logging on device). On wake match the
+  same buffer is chained into interactAudio -> normal gateway reply (emotion/vibrate/audio),
+  eyes set to LISTENING meanwhile.
+- Gateway wake misses log at DEBUG only; matches at INFO.
+
+Device-unverified (compile/test only): mic duty-cycle CPU/heap impact, wake UX quality
+and false-trigger rate, toggle gesture feel, capture collisions between hold-to-talk and
+wake sessions under real touch events.

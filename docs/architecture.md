@@ -126,7 +126,7 @@ P7 network tools/OTA design → P8 servo-ready interfaces.
 | Memory persistence (SQLite via aiosqlite-free stdlib store) | test-verified | persistence across store instances, forget/summary round-trips |
 | TTS->STT roundtrip on dev machine | verified | piper en_US-lessac-medium -> faster-whisper base, transcription matched |
 | Gateway with no providers configured | verified honest errors | TestClient, no fake replies |
-| Wake/name-mode endpoint `/v1/wake` (opt-in) | test-verified | stub STT, 6 unit tests; device chunk streaming pending |
+| Wake/name-mode endpoint `/v1/wake` + device streaming wake mode (opt-in) | test/compile-verified | stub STT unit tests + firmware build; real-audio wake unverified |
 | esp-sr wake-word feasibility | research-verified (source inspection) | docs/wake-word.md |
 | Face simulator (browser) | sim-verified | simulator/serve.sh |
 | Display/touch/mic/speaker/IMU/power on Core2 | **device-unverified** | no board attached |

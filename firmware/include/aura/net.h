@@ -55,6 +55,8 @@ class GatewayClient {
   void reportDeviceStats(int battery_pct, bool charging, int rssi);
   void setGatewayUrl(const char* url);
   void setPowerMonitor(void* pm);  // void* to avoid hal.h dependency
+  bool isBusy() const;
+  bool hasUrl() const;
 
  private:
   char _gateway_url[64] = {0};

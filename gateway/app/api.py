@@ -123,7 +123,10 @@ async def wake(request: Request, data: WakeRequest) -> WakeResponse:
     if not text:
         return WakeResponse(woke=False, reason="no speech", stt_provider=stt.name)
     woke = bool(re.search(settings.wake_regex, text, flags=re.IGNORECASE))
-    logger.info("wake check: text=%r woke=%s", text[:80], woke)
+    if woke:
+        logger.info("wake match: %r", text[:80])
+    else:
+        logger.debug("wake miss: %r", text[:40])
     return WakeResponse(woke=woke, reason="match" if woke else "no match",
                         text=text, stt_provider=stt.name)
 

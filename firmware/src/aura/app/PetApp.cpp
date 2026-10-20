@@ -25,6 +25,11 @@ static constexpr uint32_t kProactiveCheckIntervalMs = 2000;
 static constexpr uint32_t kBannerDurationMs = 1500;
 static constexpr uint8_t kTouchCornerX = 48;
 static constexpr uint8_t kTouchCornerY = 32;
+static constexpr int kWakeCornerMinX = 260;
+static constexpr int kWakeCornerMinY = 200;
+static constexpr uint32_t kWakeCaptureMs = 2500;
+static constexpr uint32_t kWakeGapMs = 1200;
+static constexpr uint32_t kFlagWakeMode = 1u << 2;
 
 void PetApp::boot() {
     _state = AppState::BOOT;
@@ -136,8 +141,9 @@ void PetApp::handleEvent(const Event& e) {
                 }
                 // Dwell handled by setEmotion trigger, no extra logic needed
             } else {
-                // Normal mode: check for corner toggle
-                if (e.a < kTouchCornerX && e.b < kTouchCornerY) {
+                if (e.a >= kWakeCornerMinX && e.b >= kWakeCornerMinY) {
+                    toggleWakeMode();
+                } else if (e.a < kTouchCornerX && e.b < kTouchCornerY) {
                     toggleDiagnostics();
                 } else {
                     // Eye gaze follows tap, trigger pet on repeated taps
@@ -227,6 +233,22 @@ void PetApp::handleEvent(const Event& e) {
     }
 }
 
+void PetApp::toggleWakeMode() {
+    _settings.flags ^= kFlagWakeMode;
+    ConfigStore store;
+    if (!store.save(_settings)) {
+        AURA_LOGW("wake mode flag save failed");
+    }
+    bool on = (_settings.flags & kFlagWakeMode) != 0;
+    if (on) {
+        s_engine.setEmotion(Emotion::LISTENING, 0.8f);
+        s_renderer.toast("wake mode on");
+    } else {
+        s_renderer.toast("wake mode off");
+    }
+    _next_wake_check_ms = millis() + kWakeGapMs;
+}
+
 void PetApp::toggleDiagnostics() {
     _diag_mode = !_diag_mode;
     _state = _diag_mode ? AppState::DIAGNOSTICS : AppState::FACE;
@@ -254,6 +276,20 @@ void PetApp::renderDiagnostics() {
     if (_wifi_init_done && now_ms - _last_stats_ms > kStatsReportMs) {
       _last_stats_ms = now_ms;
       _gatewayClient.reportDeviceStats(bat_pct, charging, rssi);
+    }
+
+    if ((_settings.flags & kFlagWakeMode) && _wifi_init_done &&
+        _gatewayClient.hasUrl() && _gatewayClient.isOnline() &&
+        !_capturing_audio && !AudioBus::instance().capturing() &&
+        !AudioBus::instance().speaking() && !_gatewayClient.isBusy() &&
+        s_engine.emotion() != Emotion::SLEEPING &&
+        s_engine.emotion() != Emotion::SLEEPY &&
+        now_ms >= _next_wake_check_ms) {
+      if (AudioBus::instance().startCapture(kWakeCaptureMs, this, PetApp::onWakeCaptured)) {
+        _capturing_audio = true;
+      } else {
+        _next_wake_check_ms = now_ms + kWakeGapMs;
+      }
     }
 
     char diag_line[50];
@@ -344,6 +380,46 @@ void PetApp::onGatewayInteract(void* ctx, const GatewayResponse* resp, bool ok) 
     
     AURA_LOGF("Gateway response: emotion=%s intensity=%.2f action=%s",
               resp->emotion, resp->expression_intensity, resp->action_type);
+}
+
+void PetApp::onWakeCaptured(void* ctx, const int16_t* pcm16, size_t samples) {
+    PetApp* self = static_cast<PetApp*>(ctx);
+    if (!self || !pcm16 || samples == 0) {
+        if (self) self->_next_wake_check_ms = millis() + kWakeGapMs;
+        return;
+    }
+
+    if (!s_captureBuffer) {
+        s_captureBuffer = static_cast<int16_t*>(heap_caps_malloc(
+            kMaxAudioSamples * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    }
+    if (!s_captureBuffer) {
+        self->_capturing_audio = false;
+        self->_next_wake_check_ms = millis() + kWakeGapMs;
+        return;
+    }
+
+    size_t copyLen = samples < kMaxAudioSamples ? samples : kMaxAudioSamples;
+    memcpy(s_captureBuffer, pcm16, copyLen * sizeof(int16_t));
+    s_captureLen = copyLen;
+
+    self->_gatewayClient.wake(s_captureBuffer, s_captureLen,
+                              PetApp::onWakeCheck, self);
+}
+
+void PetApp::onWakeCheck(void* ctx, bool woke, const char* text) {
+    PetApp* self = static_cast<PetApp*>(ctx);
+    if (!self) return;
+
+    self->_capturing_audio = false;
+    self->_next_wake_check_ms = millis() + kWakeGapMs;
+    (void)text;
+    if (!woke) return;
+
+    s_engine.setEmotion(Emotion::LISTENING, 0.8f);
+    s_engine.onActivity();
+    self->_gatewayClient.interactAudio(s_captureBuffer, s_captureLen,
+                                       PetApp::onGatewayInteract, self);
 }
 
 }  // namespace aura

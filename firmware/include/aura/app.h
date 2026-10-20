@@ -18,6 +18,7 @@ class PetApp {
 
   // ---- diagnostics harness ----
   void toggleDiagnostics();    // double-tap top-right corner
+  void toggleWakeMode();     // tap bottom-right corner zone
   bool diagnosticsActive() const { return _state == AppState::DIAGNOSTICS; }
 
  private:
@@ -26,6 +27,8 @@ class PetApp {
   void updateProactive(uint32_t now_ms);
   
   static void onNetStatus(const char* status_text, bool online);
+  static void onWakeCaptured(void* ctx, const int16_t* pcm16, size_t samples);
+  static void onWakeCheck(void* ctx, bool woke, const char* text);
   static void onGatewayInteract(void* ctx, const GatewayResponse* resp, bool ok);
   static void onAudioCaptured(void* ctx, const int16_t* pcm16, size_t samples);
 
@@ -42,6 +45,7 @@ class PetApp {
   GatewayClient _gatewayClient;
   bool _wifi_init_done = false;
   bool _capturing_audio = false;
+  uint32_t _next_wake_check_ms = 0;
 };
 
 }  // namespace aura
