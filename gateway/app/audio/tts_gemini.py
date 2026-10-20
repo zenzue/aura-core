@@ -31,7 +31,7 @@ class TTSGemini(TTSProvider):
     def _lazy_client(self):
         if genai is None:
             raise RuntimeError("'google-genai' package not installed")
-        api_key = self.settings.gemini_api_key or os.getenv("GEMINI_API_KEY")
+        api_key = self.settings.resolved_gemini_api_key
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY not set")
         if self._client is None:
@@ -78,6 +78,4 @@ class TTSGemini(TTSProvider):
             return b""
 
     async def health(self, timeout_s: float = 5.0) -> bool:
-        return genai is not None and bool(
-            self.settings.gemini_api_key or os.getenv("GEMINI_API_KEY")
-        )
+        return genai is not None and bool(self.settings.resolved_gemini_api_key)

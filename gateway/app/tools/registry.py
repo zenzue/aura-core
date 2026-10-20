@@ -67,7 +67,8 @@ class ToolRegistry:
             return {"ok": False, "error": str(e)}
 
 
-def build_registry(settings: Settings, devstats: Callable[[], Any] | None = None) -> ToolRegistry:
+def build_registry(settings: Settings, devstats: Callable[[], Any] | None = None,
+                   llm_service: Any = None) -> ToolRegistry:
     """Factory: build registry from settings flags."""
     registry = ToolRegistry()
 
@@ -89,6 +90,11 @@ def build_registry(settings: Settings, devstats: Callable[[], Any] | None = None
         registry.register(DeviceStatusPlugin(devstats))
         registry.register(NetworkStatusPlugin())
         registry.register(SpeedtestPlugin(settings))
+
+    from .provider_status import AiProviderStatusPlugin, GatewayHealthPlugin
+
+    registry.register(GatewayHealthPlugin(devstats))
+    registry.register(AiProviderStatusPlugin(llm_service))
 
     # Server monitoring
     if settings.enable_server_monitoring:

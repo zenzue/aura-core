@@ -94,7 +94,7 @@ def test_registry_flagless_minimal():
     )
     registry = build_registry(settings)
     names = {s["name"] for s in registry.specs_for_llm()}
-    assert names == {"get_local_time"}
+    assert names == {"get_local_time", "get_gateway_health", "get_ai_provider_status"}
 
 
 def test_registry_duplicate_register_rejected():

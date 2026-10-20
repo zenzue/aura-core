@@ -25,7 +25,7 @@ class STTGemini(STTProvider):
         if genai is None:
             raise RuntimeError("'google-genai' package not installed")
         if self._client is None:
-            api_key = self.settings.gemini_api_key or os.getenv("GEMINI_API_KEY")
+            api_key = self.settings.resolved_gemini_api_key
             if not api_key:
                 raise RuntimeError("GEMINI_API_KEY not set")
             self._client = genai.Client(api_key=api_key)
@@ -61,4 +61,4 @@ class STTGemini(STTProvider):
 
     async def health(self, timeout_s: float = 5.0) -> bool:
         """Health check: package installed and API key present."""
-        return genai is not None and bool(self.settings.gemini_api_key)
+        return genai is not None and bool(self.settings.resolved_gemini_api_key)

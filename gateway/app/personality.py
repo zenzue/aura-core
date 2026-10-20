@@ -1,4 +1,5 @@
 import logging
+import random
 from typing import Dict, Any, List, Optional
 from enum import Enum
 
@@ -99,6 +100,17 @@ def build_personality(settings: Settings) -> Persona:
     """Build personality based on settings."""
     persona_class = PERSONAS.get(settings.pet_personality or "playful_assistant", PERSONAS["playful_assistant"])
     return persona_class(settings)
+
+
+def pick_wake_ack(settings: Settings) -> tuple[str, str] | None:
+    """Short random acknowledgment paired with an emotion so voice and face
+    stay coordinated when the pet is activated."""
+    if not settings.wake_ack_enabled:
+        return None
+    options = settings.wake_ack_options()
+    if not options:
+        return None
+    return random.choice(options), "curious"
 
 
 # Example dialogues for personality tuning

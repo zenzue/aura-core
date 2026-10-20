@@ -27,15 +27,17 @@ def _build_optional(label: str, fn, *args) -> Any:
 
 def create_app(settings: Settings) -> Litestar:
     from app.audio import build_stt, build_tts
-    from app.providers import build_llm
+    from app.providers.service import ProviderService
     from app.tools import build_registry
 
     devstats: dict[str, Any] = {}
 
-    llm = _build_optional("llm", build_llm, settings)
+    llm_service = ProviderService(settings)
+    llm = llm_service.active
     stt = _build_optional("stt", build_stt, settings)
     tts = _build_optional("tts", build_tts, settings)
-    tools = _build_optional("tools", build_registry, settings, lambda: dict(devstats))
+    tools = _build_optional("tools", build_registry, settings,
+                            lambda: dict(devstats), llm_service)
 
     memory = None
     if settings.enable_memory:
@@ -57,6 +59,7 @@ def create_app(settings: Settings) -> Litestar:
 
     app.state.settings = settings
     app.state.devstats = devstats
+    app.state.llm_service = llm_service
     app.state.llm = llm
     app.state.stt = stt
     app.state.tts = tts

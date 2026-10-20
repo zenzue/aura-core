@@ -4,21 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hmac
 import logging
 import re
 from typing import Any, Dict, List
 
-from litestar import Request, get, post
+from litestar import Request, Response, get, post
 
 from app.config import Settings
 
 from app.audio.wav_utils import parse_wav, rms
+from app.personality import pick_wake_ack
 from app.schemas import (
     WakeRequest,
     WakeResponse,
     AuraResponse,
     DeviceStats,
     InteractRequest,
+    ProviderSwitchRequest,
     TTSRequest,
     ToolCall as ToolCallSchema,
 )
@@ -50,6 +53,58 @@ async def health_check(request: Request) -> Dict[str, Any]:
     return {"ok": True}
 
 
+async def readiness(request: Request) -> Dict[str, Any]:
+    """Readiness: config loaded; provider problems reported, never hidden."""
+    state = _state(request)
+    settings: Settings = state.settings
+    svc = getattr(state, "llm_service", None)
+    problems = list(settings.problems())
+    if svc is not None:
+        problems += []  # provider health is probed by /v1/status, not readiness
+    return {"ready": True, "llm_problems": problems}
+
+
+def _admin_ok(request: Request) -> bool:
+    settings: Settings = _state(request).settings
+    expected = settings.admin_token.get_secret_value()
+    if not expected:
+        return False
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        return False
+    supplied = auth[len("Bearer "):]
+    return hmac.compare_digest(supplied.encode(), expected.encode())
+
+
+async def admin_provider_status(request: Request) -> Any:
+    if not _admin_ok(request):
+        return Response(status_code=403, content={"detail": "admin authentication required"})
+    svc = getattr(_state(request), "llm_service", None)
+    if svc is None:
+        return {"provider": "disabled"}
+    return {"provider": svc.name, "model": svc.model,
+            "failover_chain": [p.name for p in svc.failover],
+            "allow_cloud_failover": _state(request).settings.allow_cloud_failover}
+
+
+async def admin_provider_switch(request: Request, data: ProviderSwitchRequest) -> Any:
+    if not _admin_ok(request):
+        return Response(status_code=403, content={"detail": "admin authentication required"})
+    settings: Settings = _state(request).settings
+    svc = getattr(_state(request), "llm_service", None)
+    if svc is None:
+        return Response(status_code=503, content={"detail": "provider service unavailable"})
+    name = (data.provider or "").strip().lower()
+    if name not in ("gemini", "ollama", "llamacpp"):
+        return Response(status_code=422, content={
+            "ok": False, "error": "provider must be gemini, ollama or llamacpp"})
+    result = svc.switch(name)
+    if not result.get("ok"):
+        return Response(status_code=400, content=result)
+    _state(request).llm = svc.active
+    return Response(status_code=200, content=result)
+
+
 async def status(request: Request) -> Dict[str, Any]:
     state = _state(request)
     settings: Settings = state.settings
@@ -64,10 +119,20 @@ async def status(request: Request) -> Dict[str, Any]:
             ok = False
         return {"healthy": ok, "provider": name}
 
+    svc = getattr(state, "llm_service", None)
+    if svc is not None:
+        try:
+            llm_info = await svc.check_health(timeout_s=5.0)
+        except Exception:  # noqa: BLE001
+            llm_info = await _h(state.llm)
+    else:
+        llm_info = await _h(state.llm)
+
     return {
-        "llm": await _h(state.llm),
+        "llm": llm_info,
         "stt": await _h(state.stt),
         "tts": await _h(state.tts),
+        "ai_provider": settings.ai_provider,
     }
 
 
@@ -127,8 +192,14 @@ async def wake(request: Request, data: WakeRequest) -> WakeResponse:
         logger.info("wake match: %r", text[:80])
     else:
         logger.debug("wake miss: %r", text[:40])
+    ack_text = ack_emotion = None
+    if woke:
+        picked = pick_wake_ack(settings)
+        if picked is not None:
+            ack_text, ack_emotion = picked
     return WakeResponse(woke=woke, reason="match" if woke else "no match",
-                        text=text, stt_provider=stt.name)
+                        text=text, stt_provider=stt.name,
+                        ack_text=ack_text, ack_emotion=ack_emotion)
 
 
 async def device_stats(request: Request, data: DeviceStats) -> Dict[str, Any]:
@@ -240,14 +311,20 @@ async def interact(request: Request, data: InteractRequest) -> AuraResponse:
         logger.warning("personality build failed: %s", exc)
         tools_spec = None
 
-    # LLM
+    # LLM (provider service handles active provider + bounded failover;
+    # cloud targets only when explicitly allowed - see ProviderService)
+    svc = getattr(state, "llm_service", None)
     try:
-        raw = await state.llm.generate_reply(
-            messages=messages,
-            tools=tools_spec,
-            system_prompt=system_prompt,
-        )
-        reply = state.llm.parse_llm_reply(raw)
+        if svc is not None:
+            reply = await svc.ask(messages=messages, tools=tools_spec,
+                                  system_prompt=system_prompt)
+        else:
+            raw = await state.llm.generate_reply(
+                messages=messages,
+                tools=tools_spec,
+                system_prompt=system_prompt,
+            )
+            reply = state.llm.parse_llm_reply(raw)
     except Exception as exc:  # noqa: BLE001
         logger.error("LLM processing failed: %s", exc)
         return AuraResponse(
@@ -261,29 +338,14 @@ async def interact(request: Request, data: InteractRequest) -> AuraResponse:
         )
 
     spoken = str(reply.get("spoken_text") or "").strip()
-    if not spoken:
-        return AuraResponse(
-            spoken_text="Sorry, I received an empty reply",
-            display_text="Empty LLM reply",
-            emotion="neutral",
-            expression_intensity=0.7,
-            animation_hint="none",
-            action=None,
-            stt_text=stt_text,
-        )
     display = str(reply.get("display_text") or spoken)
     emotion = str(reply.get("emotion") or "neutral")
     intensity = float(reply.get("expression_intensity") or 1.0)
     animation_hint = reply.get("animation_hint") if isinstance(reply.get("animation_hint"), str) else None
 
-    max_chars = settings.max_spoken_chars
-    if len(spoken) > max_chars:
-        spoken = spoken[: max_chars - 3] + "..."
-    if len(display) > settings.max_spoken_chars:
-        display = display[: max_chars - 3] + "..."
-
     # tool calls requested by the model
     tool_trace: List[Any] = []
+    tool_results: List[str] = []
     for call in reply.get("tool_calls") or []:
         if not isinstance(call, dict):
             continue
@@ -296,12 +358,38 @@ async def interact(request: Request, data: InteractRequest) -> AuraResponse:
             continue
         try:
             res = await state.tools.call(name=name, args=args, timeout_s=settings.tool_timeout_s)
+            detail = (str(res.get("result", ""))[:120] if res.get("ok")
+                      else str(res.get("error", ""))[:120])
+            if res.get("ok"):
+                tool_results.append(detail)
             tool_trace.append(ToolCallSchema(
                 name=name, args=args, ok=bool(res.get("ok", True)),
-                detail=str(res.get("detail", ""))[:120],
+                detail=detail,
             ))
         except Exception as exc:  # noqa: BLE001
             tool_trace.append(ToolCallSchema(name=name, args=args, ok=False, detail=str(exc)[:120]))
+
+    if not spoken and tool_results:
+        ok_names = ", ".join(t.name for t in tool_trace if t.ok)
+        spoken = f"Checked {ok_names}. {tool_results[0]}"
+    if not spoken:
+        return AuraResponse(
+            spoken_text="Sorry, I received an empty reply",
+            display_text="Empty LLM reply",
+            emotion="neutral",
+            expression_intensity=0.7,
+            animation_hint="none",
+            action=None,
+            stt_text=stt_text,
+        )
+    if not display.strip():
+        display = spoken
+
+    max_chars = settings.max_spoken_chars
+    if len(spoken) > max_chars:
+        spoken = spoken[: max_chars - 3] + "..."
+    if len(display) > settings.max_spoken_chars:
+        display = display[: max_chars - 3] + "..."
 
     # optional TTS
     audio_b64: str | None = None
@@ -346,7 +434,10 @@ def build_routes():
     """Fresh handler objects per app (route handlers are per-Litestar-app)."""
     return [
         get(path="/healthz")(health_check),
+        get(path="/readyz")(readiness),
         get(path="/v1/status")(status),
+        get(path="/v1/admin/provider")(admin_provider_status),
+        post(path="/v1/admin/provider", status_code=200)(admin_provider_switch),
         post(path="/v1/wake", status_code=200)(wake),
         post(path="/v1/interact", status_code=200)(interact),
         post(path="/v1/device_stats", status_code=200)(device_stats),

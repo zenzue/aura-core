@@ -1,20 +1,14 @@
-import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
+from app.config import Settings
 from app.main import run
 
 
-def test_run_server() -> None:
-    """Test server startup (integration test)."""
-    with patch("uvicorn.run") as mock_run:
-        with patch("app.main.create_app") as mock_create_app:
-            with patch("app.main.load_settings") as mock_load_settings:
-                mock_settings = Mock()
-                mock_app = Mock()
-                mock_load_settings.return_value = mock_settings
-                mock_create_app.return_value = mock_app
-                
-                run()
-                
-                mock_create_app.assert_called_once_with(mock_settings)
-                mock_run.assert_called_once()
+def test_run_server(tmp_path) -> None:
+    settings = Settings(gateway_data_dir=tmp_path / "gw")
+    with patch("uvicorn.run") as mock_run, \
+         patch("app.main.create_app") as mock_create_app, \
+         patch("app.main.load_settings", return_value=settings):
+        run()
+        mock_create_app.assert_called_once_with(settings)
+        mock_run.assert_called_once()

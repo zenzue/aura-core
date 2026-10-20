@@ -1,0 +1,21 @@
+services:
+  gateway:
+    build: .
+    ports: ["8765:8765"]
+    env_file: .env
+    volumes:
+      - ./data:/srv/aura/data
+    restart: unless-stopped
+
+  # Scenario A only: local Ollama on the same host. For Scenario B/D point
+  # LLAMACPP_BASE_URL at your llama-server instead and delete this service.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    volumes:
+      - ollama:/root/.ollama
+    ports: ["11434:11434"]
+    restart: unless-stopped
+
+volumes:
+  ollama:

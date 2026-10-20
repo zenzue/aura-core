@@ -94,19 +94,35 @@ Validated gateway reply (`AuraResponse`): `spoken_text(≤240 chars)`, `display_
 Device maps emotion locally; unknown fields ignored; invalid → safe fallback.
 
 Gateway providers (independent axes — STT ≠ LLM ≠ TTS):
-- LLM: `gemini` (official google-genai SDK, structured output via response_schema + function tools) or `ollama` (/api/chat with tools, `format:"json"` structured).
+- LLM: unified ProviderService over three real adapters — `gemini` (official
+  google-genai SDK: structured output via response_schema + native function
+  tools + streaming), `ollama` (native `/api/chat`, `/api/tags`, NDJSON
+  streaming, structured-output format fallback), `llamacpp` (llama-server
+  OpenAI-compatible `/v1/models`, `/v1/chat/completions`, SSE streaming,
+  base-URL never double-appends `/v1`). All three share one contract
+  (generate/structured/stream/list_models/health/capabilities/tool support)
+  and bounded structured-reply normalization. Providers may live on different
+  hosts than the gateway (`docs/ai-infrastructure.md`); optional failover
+  chain never routes to cloud unless `ALLOW_CLOUD_FAILOVER=true`. Runtime
+  provider switch: `POST /v1/admin/provider` (admin token required).
 - STT: `faster_whisper` (WhisperModel, VAD filter) — models auto-download from HuggingFace first run; or `gemini` audio understanding via generate_content as one-stop alternative.
 - TTS: `piper` (piper-tts 1.8.0 = maintained piper1-gpl, `PiperVoice.load`/`synthesize_wav`, voice models from HF `rhasspy/piper-voices`) or `gemini_tts` (native audio models via SpeechConfig; note: cloud → audio leaves LAN).
 
-Security: device→gateway auth token header; gateway binds LAN; no credentials in device build;
-TLS optional (documented plain-HTTP-on-LAN tradeoff); microphone only active in explicit listening
-windows after wake/PTT; listening state always shown on screen; gateway rate-limits; nothing
-shell/SSH from LLM output; tools read-only allowlisted. See `docs/security-privacy.md`.
+Security: device→gateway auth token header; admin API with separate
+`ADMIN_TOKEN` (constant-time compare, disabled when unset); gateway binds LAN;
+no credentials in device build; API keys are SecretStr (masked in logs/repr);
+TLS optional (documented plain-HTTP-on-LAN tradeoff); microphone only active
+in explicit listening windows after wake/PTT; listening state always shown on
+screen; gateway rate-limits; nothing shell/SSH from LLM output; tools
+read-only allowlisted. See `docs/ai-infrastructure.md` and
+`docs/troubleshooting.md`.
 
 ## 4. Gateway design (Python 3.12, Litestar 2.x, uv)
 
-`gateway/app/{config,personality,llm,stt,tts,memory,tools,security,api,audio}/` with tests under
-`gateway/tests/`. Single-process async; SQLite via aiosqlite; structured JSON logging.
+`gateway/app/{config,api,app,main,personality,auth,rate_limit,schemas}.py` plus
+`app/{providers,audio,tools,memory}/` packages; tests under `gateway/tests_core`
+and `gateway/tests_units`. Single-process async; SQLite via aiosqlite; structured
+JSON logging (`JsonFormatter` in `app/main.py`).
 Weather via Open-Meteo (no API key — verified approach, current-forecast API);
 network diagnostics server-side (host facts) + device-reported link stats; speed test explicit, bounded.
 

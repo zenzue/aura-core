@@ -1,0 +1,25 @@
+[Unit]
+Description=AURA AI gateway (M5Stack Core2 companion)
+Documentation=file:/opt/aura-gateway/docs/deployment-jetson-orin.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=aura
+Group=aura
+WorkingDirectory=/opt/aura-gateway/gateway
+EnvironmentFile=-/opt/aura-gateway/gateway/.env
+ExecStart=/opt/aura-gateway/gateway/.venv/bin/aura-gateway
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/aura-gateway/gateway/data
+
+[Install]
+WantedBy=multi-user.target

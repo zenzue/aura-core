@@ -28,7 +28,10 @@ aura-gateway = "app.main:run"
 [tool.pytest.ini_options]
 testpaths = ["tests_core", "tests_units"]
 pythonpath = ["."]
-markers = ["requires_models: tests that download/use real AI models (slow)"]
+markers = [
+    "requires_models: tests that download/use real AI models (slow)",
+    "integration: tests that hit configured live service endpoints",
+]
 asyncio_mode = "auto"
 
 [tool.uv]

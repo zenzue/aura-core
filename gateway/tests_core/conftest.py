@@ -13,12 +13,10 @@ def settings(tmp_path) -> Settings:
         ai_provider="ollama",
         ollama_model="test-model",
         gemini_api_key="test-key",
-        openai_api_key="test-key",
         rate_limit_per_min=1000,
         max_audio_bytes=1024,
         history_max_messages=10,
         enable_memory=True,
-        debug=True,
     )
 
 
@@ -30,6 +28,9 @@ def app(settings: Settings):
 @pytest.fixture
 async def client(settings: Settings):
     app = create_app(settings)
+    # unit tests drive providers through app.state.llm mocks; the service
+    # layer would attempt real provider HTTP
+    app.state.llm_service = None
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         client.app = app  # tests inspect client.app.state

@@ -224,6 +224,7 @@ async def test_memory_background_summarize(settings, tmp_path):
     settings.enable_memory = True
     settings.summarise_every = 2
     app = _create_app(settings)
+    app.state.llm_service = None  # drive provider via app.state.llm mock only
 
     from unittest.mock import AsyncMock as _AM, Mock as _M
 

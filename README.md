@@ -10,31 +10,41 @@ AI assistant through a local gateway, pet behaviors, and persistent memory.
 
 ```
 firmware/    ESP32 Core2 firmware (PlatformIO, C++17, M5Unified/M5GFX)
-gateway/     Python AI gateway (Litestar, Gemini/Ollama, Whisper STT, Piper TTS, tools, memory)
+gateway/     Python AI gateway (Litestar, Gemini/Ollama/llama.cpp, Whisper STT, Piper TTS, tools, memory)
 simulator/   Desktop/browser face-animation simulator (developer tool)
-docs/        architecture, hardware, setup, troubleshooting
+docs/        architecture, hardware, deployment, ai-infrastructure, troubleshooting
 scripts/     dev helpers
 ```
 
-## Quickstart (development machine)
+## Architecture in one paragraph
 
-Firmware build (does not require Homebrew):
+Core2 (face + half-duplex voice + touch behaviors) → Wi-Fi → **AURA gateway**
+on any Linux ARM64/AMD64 host (primary: Jetson Orin, secondary: AI Max) →
+provider (`gemini` | `ollama` | `llamacpp`) → structured emotional reply →
+TTS → speaker + synchronized face. Gateway and LLM server may be different
+machines; the Mac is only used for firmware builds/flashing. Deployment
+scenarios A–D: `docs/ai-infrastructure.md`.
+
+## Quickstart
+
+Firmware build (any dev box with PlatformIO):
 
 ```bash
 python3 -m pip install -U platformio   # or: uv tool install platformio
-pio run -e m5stack-core2              # compile
+pio run -e m5stack-core2               # compile
 ```
 
-Gateway setup (requires Python 3.12+, uv):
+Gateway on Jetson Orin / AI Max (Python 3.12+, uv):
 
 ```bash
 cd gateway
-uv sync
-cp .env.example .env   # fill in your keys
-uv run aura-gateway
+uv sync --all-extras
+cp .env.example .env   # set AI_PROVIDER + provider URL/model + tokens
+uv run aura-gateway    # or: systemd unit in deploy/aura-gateway.service
 ```
 
-Full setup guide: `docs/macos-setup.md`.
+Environment-specific guides: `docs/deployment-jetson-orin.md`,
+`docs/deployment-ai-max.md`. Diagnostics: `docs/troubleshooting.md`.
 
 ## License
 

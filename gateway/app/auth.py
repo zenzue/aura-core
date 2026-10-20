@@ -7,7 +7,8 @@ from litestar.types import ASGIApp, Receive, Scope, Send
 
 from app.config import Settings
 
-BYPASS_PATHS = {"/healthz", "/docs", "/openapi.json", "/schema"}
+BYPASS_PATHS = {"/healthz", "/readyz", "/docs", "/openapi.json", "/schema"}
+ADMIN_PREFIX = "/v1/admin"
 
 
 class AuthMiddleware(MiddlewareProtocol):
@@ -21,6 +22,10 @@ class AuthMiddleware(MiddlewareProtocol):
             return await self.app(scope, receive, send)
         path = scope.get("path", "")
         if path in BYPASS_PATHS or not self.auth_required:
+            return await self.app(scope, receive, send)
+        if path.startswith(ADMIN_PREFIX):
+            # Admin endpoints carry their own bearer admin token (enforced in
+            # the handler) - they must not be locked behind the device token.
             return await self.app(scope, receive, send)
 
         headers = dict(scope.get("headers", []))

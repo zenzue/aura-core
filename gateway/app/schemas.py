@@ -102,6 +102,12 @@ class WakeResponse(BaseModel):
     reason: str = "disabled"
     text: str | None = None
     stt_provider: str | None = None
+    ack_text: str | None = None          # short acknowledgment on match
+    ack_emotion: str | None = None       # emotion coordinating the ack
+
+
+class ProviderSwitchRequest(BaseModel):
+    provider: str = ""
 
 
 class HealthOut(BaseModel):
