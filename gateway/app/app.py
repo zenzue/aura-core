@@ -62,6 +62,7 @@ def create_app(settings: Settings) -> Litestar:
     app.state.tts = tts
     app.state.tools = tools
     app.state.memory = memory
+    app.state.bg_tasks = set()
 
     logger.info(
         "AURA gateway ready: llm=%s stt=%s tts=%s tools=%s memory=%s",

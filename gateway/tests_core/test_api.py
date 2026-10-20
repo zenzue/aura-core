@@ -214,3 +214,47 @@ async def test_ollama_provider_integration(client) -> None:
     # This test would require actual Ollama setup
     # Skip for now as it's marked as requires_models
     pytest.skip("Requires Ollama models - skipping for now")
+
+@pytest.mark.asyncio
+async def test_memory_background_summarize(settings, tmp_path):
+    """Summarization runs in a background task and must not delay or fake replies."""
+    from app.app import create_app as _create_app
+    import httpx
+
+    settings.enable_memory = True
+    settings.summarise_every = 2
+    app = _create_app(settings)
+
+    from unittest.mock import AsyncMock as _AM, Mock as _M
+
+    reply = {
+        "spoken_text": "ok",
+        "display_text": "ok",
+        "emotion": "neutral",
+        "expression_intensity": 0.5,
+        "animation_hint": "none",
+        "action": "none",
+    }
+    app.state.llm = _M()
+    app.state.llm.generate_reply = _AM(return_value=dict(reply))
+    app.state.llm.parse_llm_reply = _M(side_effect=lambda x: x)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        for i in range(2):
+            r = await client.post(
+                "/v1/interact",
+                json={"text": f"hello {i}", "conversation_id": "c-bg"},
+            )
+            assert r.status_code == 200
+
+        tasks = list(app.state.bg_tasks)
+        for task in tasks:
+            await task
+
+        assert app.state.memory is not None
+        msgs = app.state.memory.get_messages("c-bg")
+        summaries = [m for m in msgs if m.get("summary")]
+        assert len(summaries) >= 1
+        assert all(m["role"] == "system" for m in summaries)
+        assert all(m["content"] == "ok" for m in summaries)

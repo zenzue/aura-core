@@ -2,6 +2,7 @@
 Missing provider => explicit error, never a fabricated result."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import re
@@ -69,6 +70,19 @@ async def status(request: Request) -> Dict[str, Any]:
         "tts": await _h(state.tts),
     }
 
+
+
+
+def _schedule_summarize(app: Any, memory: Any, conversation_id: str, llm: Any) -> None:
+    if llm is None:
+        return
+    task = asyncio.create_task(memory.maybe_summarize(llm, conversation_id))
+    tasks: set = getattr(app.state, "bg_tasks", None)
+    if tasks is None:
+        tasks = set()
+        app.state.bg_tasks = tasks
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
 
 
 async def wake(request: Request, data: WakeRequest) -> WakeResponse:
@@ -306,7 +320,7 @@ async def interact(request: Request, data: InteractRequest) -> AuraResponse:
             await state.memory.append_message(
                 data.conversation_id, {"role": "assistant", "content": display}
             )
-            await state.memory.maybe_summarize(state.llm, data.conversation_id)
+            _schedule_summarize(request.app, state.memory, data.conversation_id, state.llm)
         except Exception as exc:  # noqa: BLE001
             logger.warning("memory append failed: %s", exc)
 
