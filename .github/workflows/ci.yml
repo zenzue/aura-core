@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (base deps only)
+        run: uv sync
+      - name: Tests (without optional extras)
+        run: uv run pytest -q
+      - name: Install (all extras)
+        run: uv sync --all-extras
+      - name: Tests (with extras)
+        run: uv run pytest -q
+
+  firmware:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: firmware
+    steps:
+      - uses: actions/checkout@v4
+      - uses: platformio/setup-platformio--action@v1
+        with:
+          python-version: "3.11"
+      - name: Build m5stack-core2
+        run: pio run -e m5stack-core2
